@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postfix-deployment-a
+  namespace: default
+  labels:
+    app: postfix-a
+spec:
+  replicas: 35
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: postfix-a
+  template:
+    metadata:
+      labels:
+        app: postfix-a
+        role: postfix
+    spec:
+      nodeSelector:
+        workload: postfix-a
+        karpenter.sh/capacity-type: spot
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: postfix-a
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: postfix-container
+          image: <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/postfix:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 25
+              hostPort: 25
+              protocol: TCP
+          volumeMounts:
+            - name: postfix-spool
+              mountPath: /var/spool/postfix
+            - name: helo-script
+              mountPath: /opt/scripts/helo.sh
+              subPath: helo.sh
+              readOnly: true
+            - name: recipient-canonical
+              mountPath: /etc/postfix/recipient_canonical
+              subPath: recipient_canonical
+              readOnly: true
+      volumes:
+        - name: postfix-spool
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+        - name: helo-script
+          configMap:
+            name: postfix-helo-script
+            defaultMode: 0755
+        - name: recipient-canonical
+          configMap:
+            name: postfix-recipient-canonical

@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: gateway
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        role: gateway
+      containers:
+        - name: haproxy
+          image: haproxy:2.9
+          securityContext:
+            runAsUser: 0
+            capabilities:
+              add:
+                - NET_BIND_SERVICE
+          resources:
+            requests:
+              memory: "128Mi"
+            limits:
+              memory: "256Mi"
+          ports:
+            - containerPort: 25
+              hostPort: 25
+              protocol: TCP
+          volumeMounts:
+            - name: haproxy-config
+              mountPath: /usr/local/etc/haproxy/haproxy.cfg
+              subPath: haproxy.cfg
+      volumes:
+        - name: haproxy-config
+          configMap:
+            name: gateway-config
+
+#Gateway Pod を 2台の gateway node に 1個ずつ配置
+#DaemonSet を使ったので、対象 node ごとに 1Pod ずつ動いています
+#Gateway Pod が node の 25番ポートで待ち受け
+#HAProxy が postfix Service に TCP 転送
+#25番 bind の権限を付与
+#runAsUser: 0
+#NET_BIND_SERVICE
+#まず前提Linux では 1024未満のポート は 特権ポート です。
+#25 はその中に入るので、普通の権限のプロセスは bind() できません。
+#runAsUser: 0 は、コンテナ内のプロセスを root で動かす指定です。
+#NET_BIND_SERVICE は1024未満のポートに bind する権限だけを与えるものです。

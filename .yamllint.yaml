@@ -1,0 +1,11 @@
+---
+extends: default
+
+rules:
+  line-length: disable
+  document-start: disable
+  comments: disable
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 0

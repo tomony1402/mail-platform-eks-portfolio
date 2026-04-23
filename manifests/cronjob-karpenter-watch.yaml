@@ -1,0 +1,224 @@
+---
+# ServiceAccount used by karpenter-watch CronJob
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: karpenter-watch
+  namespace: kube-system
+---
+# ClusterRole: read pods/events/nodes
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: karpenter-watch
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "events", "nodes"]
+    verbs: ["get", "list"]
+---
+# Bind ClusterRole to the ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: karpenter-watch
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: karpenter-watch
+subjects:
+  - kind: ServiceAccount
+    name: karpenter-watch
+    namespace: kube-system
+---
+# Role: ConfigMap read/write in kube-system (for state persistence)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: karpenter-watch-configmap
+  namespace: kube-system
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "patch"]
+---
+# Bind Role to the ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: karpenter-watch-configmap
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: karpenter-watch-configmap
+subjects:
+  - kind: ServiceAccount
+    name: karpenter-watch
+    namespace: kube-system
+---
+# Karpenter health watch: every 5 minutes
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: karpenter-watch
+  namespace: kube-system
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: karpenter-watch
+          restartPolicy: Never
+          containers:
+            - name: kubectl
+              image: alpine/k8s:1.30.4
+              env:
+                - name: CHATWORK_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: chatwork-secret
+                      key: token
+                - name: CHATWORK_ROOM_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: chatwork-secret
+                      key: room_id
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  ROOM_ID="${CHATWORK_ROOM_ID}"
+                  NAMESPACE="karpenter"
+                  STATE_CM="karpenter-watch-state"
+                  ANOMALY=0
+                  MESSAGES=""
+
+                  # karpenter namespace の全Podを検査
+                  while IFS= read -r line; do
+                    [ -z "$line" ] && continue
+                    POD_NAME=$(echo "$line" | awk '{print $1}')
+                    PHASE=$(echo "$line"    | awk '{print $2}')
+                    READY=$(echo "$line"    | awk '{print $3}')
+                    STATUS=$(echo "$line"   | awk '{print $4}')
+                    RESTARTS=$(echo "$line" | awk '{print $5}')
+
+                    BAD=0
+                    if [ "$PHASE" != "Running" ] && [ "$PHASE" != "Succeeded" ]; then
+                      BAD=1
+                    fi
+                    case "$STATUS" in
+                      CrashLoopBackOff|Error|OOMKilled|ImagePullBackOff|ErrImagePull)
+                        BAD=1 ;;
+                    esac
+
+                    if [ "$BAD" = "1" ]; then
+                      ANOMALY=1
+                      MESSAGES="${MESSAGES}\n  - ${POD_NAME}: phase=${PHASE} ready=${READY} status=${STATUS} restarts=${RESTARTS}"
+
+                      # 実行ノードの状態を取得
+                      NODE=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" \
+                        -o jsonpath='{.spec.nodeName}' 2>/dev/null)
+                      if [ -n "$NODE" ]; then
+                        MEM_PRESSURE=$(kubectl get node "$NODE" \
+                          -o jsonpath='{range .status.conditions[?(@.type=="MemoryPressure")]}{.status}{end}' 2>/dev/null)
+                        DISK_PRESSURE=$(kubectl get node "$NODE" \
+                          -o jsonpath='{range .status.conditions[?(@.type=="DiskPressure")]}{.status}{end}' 2>/dev/null)
+                        NODE_STATUS=$(kubectl get node "$NODE" --no-headers 2>/dev/null | awk '{print $2}')
+                        MESSAGES="${MESSAGES}\n    Node: ${NODE} status=${NODE_STATUS} MemoryPressure=${MEM_PRESSURE} DiskPressure=${DISK_PRESSURE}"
+                      fi
+
+                      # 直近のPodイベントを取得（Warning のみ最大3件）、英語原文＋日本語要約
+                      EVTMP=$(mktemp)
+                      kubectl get events -n "$NAMESPACE" \
+                        --field-selector involvedObject.name="$POD_NAME" \
+                        --sort-by='.lastTimestamp' 2>/dev/null | \
+                        grep Warning | tail -3 > "$EVTMP"
+                      EVENTS=""
+                      while IFS= read -r ev_line; do
+                        [ -z "$ev_line" ] && continue
+                        REASON=$(echo "$ev_line" | awk '{print $3}')
+                        MSG=$(echo "$ev_line" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
+                          sed 's/([a-f0-9-]*)//' | xargs)
+                        case "$REASON" in
+                          BackOff)           JP="コンテナが失敗して再起動を繰り返しています" ;;
+                          OOMKilling)        JP="メモリ不足でコンテナが強制終了されました" ;;
+                          Failed)            JP="コンテナの起動に失敗しました" ;;
+                          ErrImagePull)      JP="イメージの取得に失敗しました" ;;
+                          ImagePullBackOff)  JP="イメージ取得のリトライを繰り返しています" ;;
+                          Killing)           JP="コンテナを強制終了しています" ;;
+                          Evicted)           JP="リソース不足でPodが追い出されました" ;;
+                          NodeNotReady)      JP="ノードが応答していません" ;;
+                          *)                 JP="" ;;
+                        esac
+                        EVENTS="${EVENTS}\n      ${MSG}"
+                        [ -n "$JP" ] && EVENTS="${EVENTS}\n      → ${JP}"
+                      done < "$EVTMP"
+                      rm -f "$EVTMP"
+                      if [ -n "$EVENTS" ]; then
+                        MESSAGES="${MESSAGES}\n    Events:${EVENTS}"
+                      fi
+                    fi
+                  done << EOF
+                  $(kubectl get pods -n "$NAMESPACE" \
+                      --no-headers \
+                      -o custom-columns=\
+                  NAME:.metadata.name,\
+                  PHASE:.status.phase,\
+                  READY:.status.containerStatuses[0].ready,\
+                  STATUS:.status.containerStatuses[0].state.waiting.reason,\
+                  RESTARTS:.status.containerStatuses[0].restartCount \
+                      2>/dev/null || true)
+                  EOF
+
+                  # 前回の状態をConfigMapから取得
+                  LAST_STATUS=$(kubectl get configmap "$STATE_CM" -n kube-system \
+                    -o jsonpath='{.data.status}' 2>/dev/null || echo "OK")
+
+                  TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+                  if [ "$ANOMALY" = "1" ]; then
+                    # 状態をANOMALYに更新
+                    kubectl create configmap "$STATE_CM" -n kube-system \
+                      --from-literal=status=ANOMALY --dry-run=client -o yaml | \
+                      kubectl apply -f - > /dev/null
+
+                    # OK→ANOMALY の状態変化時のみ通知（重複送信防止）
+                    if [ "$LAST_STATUS" != "ANOMALY" ]; then
+                      BODY=$(printf '[警告] Karpenter Pod 異常検知 (%s)\nnamespace: %s\n%b' \
+                        "$TS" "$NAMESPACE" "$MESSAGES")
+                      curl -sf \
+                        -X POST \
+                        -H "X-ChatWorkToken: ${CHATWORK_TOKEN}" \
+                        -d "body=${BODY}" \
+                        "https://api.chatwork.com/v2/rooms/${ROOM_ID}/messages" \
+                        > /dev/null
+                      echo "ALERT sent: $MESSAGES"
+                    else
+                      echo "STILL ANOMALY (no duplicate alert): $MESSAGES"
+                    fi
+                    exit 1
+                  else
+                    # 状態をOKに更新
+                    kubectl create configmap "$STATE_CM" -n kube-system \
+                      --from-literal=status=OK --dry-run=client -o yaml | \
+                      kubectl apply -f - > /dev/null
+
+                    # ANOMALY→OK の状態変化時のみ復旧通知を送る
+                    if [ "$LAST_STATUS" = "ANOMALY" ]; then
+                      BODY=$(printf '[復旧] Karpenter Pod が正常に戻りました (%s)\nnamespace: %s\nkarpenter namespace の全Podが正常稼働中です。' \
+                        "$TS" "$NAMESPACE")
+                      curl -sf \
+                        -X POST \
+                        -H "X-ChatWorkToken: ${CHATWORK_TOKEN}" \
+                        -d "body=${BODY}" \
+                        "https://api.chatwork.com/v2/rooms/${ROOM_ID}/messages" \
+                        > /dev/null
+                      echo "RECOVERY notification sent"
+                    else
+                      echo "OK: all Karpenter pods are healthy in namespace ${NAMESPACE}"
+                    fi
+                  fi

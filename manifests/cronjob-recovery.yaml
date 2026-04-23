@@ -1,0 +1,424 @@
+---
+# ServiceAccount for S3 recovery pods
+# nightmode-controller-role を流用（S3権限・バケットが完全一致）
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: s3-recovery
+  namespace: kube-system
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:role/nightmode-controller-role
+---
+# ConfigMap: helo script（kube-system用コピー）
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: recovery-helo-script
+  namespace: kube-system
+data:
+  helo.sh: |
+    #!/bin/bash
+    set -e
+    rand_num() { tr -dc '0-9' </dev/urandom | head -c "$1"; }
+    rand_lower() { tr -dc 'a-z' </dev/urandom | head -c "$1"; }
+    random1=$(rand_num 1)
+    random4=$(rand_num 4)
+    random6=$(rand_num 6)
+    random8=$(rand_lower 4)
+    /usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=mailer${random6}.${random8}${random1}.service.<YOUR_COMPANY_DOMAIN>
+    /usr/sbin/postfix reload
+---
+# ConfigMap: recipient_canonical（kube-system用コピー）
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: recovery-recipient-canonical
+  namespace: kube-system
+data:
+  recipient_canonical: |
+    /^(.+)@source-domain-1.example.com$/  ${1}@dest-domain-1.example.com
+    /^(.+)@source-domain-2.example.com$/  ${1}@dest-domain-2.example.com
+    /^(.+)@source-domain-3.example.com$/  ${1}@dest-domain-1.example.com
+    /^(.+)@source-domain-4.example.com$/  ${1}@dest-domain-1.example.com
+    /^(.+)@source-domain-5.example.com$/  ${1}@dest-domain-1.example.com
+    /^(.+)@source-domain-6.example.com$/  ${1}@dest-domain-1.example.com
+---
+# NodePool: recovery 専用 Spot ノード（処理完了後に自動消滅）
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: recovery-spot
+spec:
+  weight: 50
+  template:
+    metadata:
+      labels:
+        workload: recovery
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: mail-nodes
+      expireAfter: 3h
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["t3.small", "t3a.small", "t2.small"]
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
+---
+# CronJob: S3 リカバリー部隊
+# 9:00/11:00/13:00/15:00/17:00/19:00 JST (= 0:00/2:00/4:00/6:00/8:00/10:00 UTC)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: s3-recovery
+  namespace: kube-system
+spec:
+  schedule: "0 0,2,4,6,8,10 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 6
+  failedJobsHistoryLimit: 6
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 6600
+      ttlSecondsAfterFinished: 600
+      completions: 5
+      parallelism: 5
+      completionMode: Indexed
+      template:
+        metadata:
+          labels:
+            app: s3-recovery-worker
+        spec:
+          serviceAccountName: s3-recovery
+          restartPolicy: Never
+          # 既存 Postfix Pod と同じネットワーク設定で直接配信
+          hostNetwork: true
+          dnsPolicy: ClusterFirstWithHostNet
+          nodeSelector:
+            workload: recovery
+            karpenter.sh/capacity-type: spot
+          # 1ノード1Pod強制（hostNetwork共有によるport 25衝突を防ぐ）
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app: s3-recovery-worker
+                  topologyKey: kubernetes.io/hostname
+
+          # -------------------------------------------------------
+          # Init container: S3からダウンロード＆postcat形式を解析
+          # -------------------------------------------------------
+          initContainers:
+            - name: fetcher
+              image: alpine/k8s:1.30.4
+              env:
+                - name: BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: mail-platform-secret
+                      key: s3_recovery_bucket
+                - name: TOTAL_PODS
+                  value: "5"
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  INDEX=${JOB_COMPLETION_INDEX}
+                  RUN_TS=$(date -u +%Y-%m-%dT%H%MZ)
+                  echo "$RUN_TS" > /shared/run_ts
+                  mkdir -p /shared/queue
+
+                  echo "[fetcher pod=$INDEX] start"
+
+                  # S3 pending/ 一覧（ゼロバイト除外・ソート済み）
+                  aws s3 ls "s3://${BUCKET}/pending/" --recursive \
+                    | awk '$3 > 0 {print $4}' \
+                    | sort > /tmp/all_files.txt
+
+                  TOTAL_FILES=$(wc -l < /tmp/all_files.txt)
+                  echo "[fetcher pod=$INDEX] total pending: $TOTAL_FILES"
+
+                  if [ "$TOTAL_FILES" -eq 0 ]; then
+                    echo "[fetcher pod=$INDEX] nothing to do"
+                    echo "0" > /shared/queue_size
+                    exit 0
+                  fi
+
+                  # 500件以下はpod-0だけ処理、残りは終了
+                  if [ "$TOTAL_FILES" -le 500 ] && [ "$INDEX" -gt 0 ]; then
+                    echo "[fetcher pod=$INDEX] only $TOTAL_FILES files, pod-0 handles it, exiting"
+                    echo "0" > /shared/queue_size
+                    exit 0
+                  fi
+
+                  # このPodが担当するファイルを番号付きで抽出
+                  # 500件以下はpod-0が全件処理、それ以外はラウンドロビン
+                  LINE_NUM=0
+                  ITEM=0
+                  while IFS= read -r S3KEY; do
+                    if [ "$TOTAL_FILES" -le 500 ] || [ $(( LINE_NUM % TOTAL_PODS )) -eq "$INDEX" ]; then
+                      printf '%06d\t%s\n' "$ITEM" "$S3KEY"
+                      ITEM=$(( ITEM + 1 ))
+                    fi
+                    LINE_NUM=$(( LINE_NUM + 1 ))
+                  done < /tmp/all_files.txt > /tmp/my_files.txt
+
+                  MY_COUNT=$(wc -l < /tmp/my_files.txt)
+                  echo "[fetcher pod=$INDEX] my share: $MY_COUNT files"
+
+                  # 20並列でダウンロード＆パース
+                  PARALLEL=20
+                  JOBS=0
+                  _download_and_parse() {
+                    local ITEM_NUM="$1" S3KEY="$2"
+                    local QDIR
+                    QDIR="/shared/queue/${ITEM_NUM}"
+                    mkdir -p "$QDIR"
+                    local RAW
+                    RAW=$(mktemp)
+                    if aws s3 cp "s3://${BUCKET}/${S3KEY}" "$RAW" 2>/dev/null; then
+                      awk '
+                        /^\*\*\* ENVELOPE/{e=1} /^\*\*\* MESSAGE/{e=0}
+                        e && /^sender:/{print $2; exit}
+                      ' "$RAW" > "$QDIR/from"
+                      awk '
+                        /^\*\*\* ENVELOPE/{e=1} /^\*\*\* MESSAGE/{e=0}
+                        e && /^recipient:/{print $2}
+                      ' "$RAW" > "$QDIR/rcpt"
+                      awk '
+                        /^\*\*\* MESSAGE CONTENTS/{p=1; next}
+                        /^\*\*\* HEADER EXTRACTED/{p=0}
+                        p{print}
+                      ' "$RAW" > "$QDIR/body.eml"
+                      echo "$S3KEY" > "$QDIR/s3key"
+                      echo "[fetcher pod=$INDEX] fetched: $S3KEY"
+                    else
+                      echo "[fetcher pod=$INDEX] skip (already gone): $S3KEY"
+                      rmdir "$QDIR" 2>/dev/null || true
+                    fi
+                    rm -f "$RAW"
+                  }
+
+                  while IFS=$(printf '\t') read -r ITEM_NUM S3KEY; do
+                    _download_and_parse "$ITEM_NUM" "$S3KEY" &
+                    JOBS=$(( JOBS + 1 ))
+                    if [ "$JOBS" -ge "$PARALLEL" ]; then
+                      wait
+                      JOBS=0
+                    fi
+                  done < /tmp/my_files.txt
+                  wait
+
+                  ITEM=$(find /shared/queue -maxdepth 1 -mindepth 1 -type d | wc -l)
+                  echo "$ITEM" > /shared/queue_size
+                  echo "[fetcher pod=$INDEX] fetch complete: $ITEM items"
+
+          # -------------------------------------------------------
+          # Main container: Postfix で直接配信
+          # -------------------------------------------------------
+          containers:
+            - name: postfix-delivery
+              image: <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/postfix:latest
+              imagePullPolicy: Always
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
+                - name: postfix-spool
+                  mountPath: /var/spool/postfix
+                - name: helo-script
+                  mountPath: /opt/scripts/helo.sh
+                  subPath: helo.sh
+                  readOnly: true
+                - name: recipient-canonical
+                  mountPath: /etc/postfix/recipient_canonical
+                  subPath: recipient_canonical
+                  readOnly: true
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -e
+                  INDEX=${JOB_COMPLETION_INDEX}
+                  echo "[postfix pod=$INDEX] starting postfix"
+
+                  postfix start
+                  sleep 3
+                  bash /opt/scripts/helo.sh
+                  echo "[postfix pod=$INDEX] postfix ready"
+
+                  QUEUE_SIZE=$(cat /shared/queue_size 2>/dev/null || echo 0)
+                  if [ "$QUEUE_SIZE" -eq 0 ]; then
+                    echo "[postfix pod=$INDEX] nothing to deliver, exiting"
+                    touch /shared/postfix_done
+                    exit 0
+                  fi
+                  echo "[postfix pod=$INDEX] items to deliver: $QUEUE_SIZE"
+
+                  SENT=0
+                  FAILED=0
+                  SKIPPED=0
+
+                  for QDIR in /shared/queue/*/; do
+                    [ -d "$QDIR" ] || continue
+
+                    FROM=$(cat "$QDIR/from" 2>/dev/null || echo "")
+                    RCPTS=$(cat "$QDIR/rcpt" 2>/dev/null | tr '\n' ' ' | xargs 2>/dev/null || echo "")
+
+                    if [ -z "$FROM" ] || [ -z "$RCPTS" ] || [ ! -s "$QDIR/body.eml" ]; then
+                      echo "[postfix pod=$INDEX] skip (parse error): $QDIR"
+                      touch "$QDIR/failed"
+                      SKIPPED=$(( SKIPPED + 1 ))
+                      continue
+                    fi
+
+                    echo "[postfix pod=$INDEX] inject: $FROM -> $RCPTS"
+                    # shellcheck disable=SC2086
+                    if sendmail -i -f "$FROM" $RCPTS < "$QDIR/body.eml" 2>/dev/null; then
+                      touch "$QDIR/sent"
+                      SENT=$(( SENT + 1 ))
+                    else
+                      touch "$QDIR/failed"
+                      FAILED=$(( FAILED + 1 ))
+                      echo "[postfix pod=$INDEX] sendmail failed: $QDIR"
+                    fi
+                  done
+
+                  echo "[postfix pod=$INDEX] injection done: sent=$SENT failed=$FAILED skipped=$SKIPPED"
+
+                  # キュードレイン待機（最大15分、それ以降は到達不能とみなして強制削除）
+                  TIMEOUT=900
+                  ELAPSED=0
+                  while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+                    COUNT=$(postqueue -p 2>/dev/null | grep -c '^[A-F0-9]' || echo 0)
+                    echo "[postfix pod=$INDEX] queue remaining: $COUNT"
+                    [ "$COUNT" -eq 0 ] && break
+                    sleep 15
+                    ELAPSED=$(( ELAPSED + 15 ))
+                  done
+
+                  # タイムアウト後も残っているメールは到達不能として強制削除
+                  REMAINING=$(postqueue -p 2>/dev/null | grep -c '^[A-F0-9]' || echo 0)
+                  if [ "$REMAINING" -gt 0 ]; then
+                    echo "[postfix pod=$INDEX] timeout: deleting $REMAINING stuck mails"
+                    postsuper -d ALL 2>/dev/null || true
+                    REMAINING=0
+                  fi
+                  printf '{"sent":%s,"failed":%s,"skipped":%s,"remaining":%s}\n' \
+                    "$SENT" "$FAILED" "$SKIPPED" "$REMAINING" \
+                    > /shared/delivery_stats.json
+
+                  touch /shared/postfix_done
+                  echo "[postfix pod=$INDEX] done"
+
+            # -------------------------------------------------------
+            # Sidecar: 配信済みをS3削除 → stats.json 更新
+            # -------------------------------------------------------
+            - name: s3-sync
+              image: alpine/k8s:1.30.4
+              env:
+                - name: BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: mail-platform-secret
+                      key: s3_recovery_bucket
+                - name: TOTAL_PODS
+                  value: "5"
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  INDEX=${JOB_COMPLETION_INDEX}
+                  RUN_TS=$(cat /shared/run_ts 2>/dev/null || date -u +%Y-%m-%dT%H%MZ)
+
+                  echo "[s3-sync pod=$INDEX] waiting for postfix to finish..."
+                  until [ -f /shared/postfix_done ]; do sleep 5; done
+                  echo "[s3-sync pod=$INDEX] postfix done, syncing S3"
+
+                  # 配信成功ファイルをS3から削除
+                  DELETED=0
+                  for SENTFILE in /shared/queue/*/sent; do
+                    [ -f "$SENTFILE" ] || continue
+                    QDIR=$(dirname "$SENTFILE")
+                    S3KEY=$(cat "$QDIR/s3key" 2>/dev/null || echo "")
+                    [ -z "$S3KEY" ] && continue
+                    aws s3 rm "s3://${BUCKET}/${S3KEY}" 2>/dev/null \
+                      && DELETED=$(( DELETED + 1 )) \
+                      || echo "[s3-sync pod=$INDEX] warn: rm failed for $S3KEY"
+                  done
+                  echo "[s3-sync pod=$INDEX] deleted from S3: $DELETED"
+
+                  # per-pod 統計を S3 に記録
+                  STATS=$(cat /shared/delivery_stats.json 2>/dev/null || echo '{"sent":0,"failed":0,"skipped":0,"remaining":0}')
+                  P_SENT=$(printf '%s' "$STATS"  | grep -o '"sent":[0-9]*'      | cut -d: -f2); P_SENT=${P_SENT:-0}
+                  P_FAIL=$(printf '%s' "$STATS"  | grep -o '"failed":[0-9]*'    | cut -d: -f2); P_FAIL=${P_FAIL:-0}
+                  P_SKIP=$(printf '%s' "$STATS"  | grep -o '"skipped":[0-9]*'   | cut -d: -f2); P_SKIP=${P_SKIP:-0}
+                  P_REM=$(printf '%s'  "$STATS"  | grep -o '"remaining":[0-9]*' | cut -d: -f2); P_REM=${P_REM:-0}
+
+                  printf '{"timestamp":"%s","pod":%s,"sent":%s,"failed":%s,"skipped":%s,"remaining":%s}\n' \
+                    "$RUN_TS" "$INDEX" "$P_SENT" "$P_FAIL" "$P_SKIP" "$P_REM" \
+                    | aws s3 cp - "s3://${BUCKET}/stats/run-${RUN_TS}-pod${INDEX}.json"
+                  echo "[s3-sync pod=$INDEX] per-pod stats written"
+
+                  # pod=0 が全 Pod 分を集計して stats.json を更新
+                  if [ "$INDEX" -ne 0 ]; then
+                    exit 0
+                  fi
+
+                  echo "[s3-sync pod=0] waiting 90s for other pods..."
+                  sleep 90
+
+                  TOT_SENT=0; TOT_FAIL=0; TOT_SKIP=0; TOT_REM=0; POD_JSON=""
+                  for P in $(seq 0 $(( TOTAL_PODS - 1 ))); do
+                    PSTATS=$(aws s3 cp "s3://${BUCKET}/stats/run-${RUN_TS}-pod${P}.json" - 2>/dev/null \
+                      || printf '{"sent":0,"failed":0,"skipped":0,"remaining":0}')
+                    PS=$(printf '%s' "$PSTATS" | grep -o '"sent":[0-9]*'      | cut -d: -f2); PS=${PS:-0}
+                    PF=$(printf '%s' "$PSTATS" | grep -o '"failed":[0-9]*'    | cut -d: -f2); PF=${PF:-0}
+                    PK=$(printf '%s' "$PSTATS" | grep -o '"skipped":[0-9]*'   | cut -d: -f2); PK=${PK:-0}
+                    PR=$(printf '%s' "$PSTATS" | grep -o '"remaining":[0-9]*' | cut -d: -f2); PR=${PR:-0}
+                    TOT_SENT=$(( TOT_SENT + PS ))
+                    TOT_FAIL=$(( TOT_FAIL + PF ))
+                    TOT_SKIP=$(( TOT_SKIP + PK ))
+                    TOT_REM=$(( TOT_REM  + PR ))
+                    [ -n "$POD_JSON" ] && POD_JSON="${POD_JSON},"
+                    POD_JSON="${POD_JSON}{\"pod\":${P},\"sent\":${PS},\"failed\":${PF},\"skipped\":${PK},\"remaining\":${PR}}"
+                  done
+
+                  printf '{"timestamp":"%s","total_sent":%s,"total_failed":%s,"total_skipped":%s,"total_remaining":%s,"pods":[%s]}\n' \
+                    "$RUN_TS" "$TOT_SENT" "$TOT_FAIL" "$TOT_SKIP" "$TOT_REM" "$POD_JSON" \
+                    | aws s3 cp - "s3://${BUCKET}/stats.json"
+                  echo "[s3-sync pod=0] stats.json updated: sent=$TOT_SENT failed=$TOT_FAIL remaining=$TOT_REM"
+
+          volumes:
+            - name: shared
+              emptyDir: {}
+            - name: postfix-spool
+              emptyDir:
+                medium: Memory
+                sizeLimit: 1Gi
+            - name: helo-script
+              configMap:
+                name: recovery-helo-script
+                defaultMode: 0755
+            - name: recipient-canonical
+              configMap:
+                name: recovery-recipient-canonical

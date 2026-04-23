@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: default
+data:
+  haproxy.cfg: |
+    defaults
+      mode tcp
+
+    frontend smtp_in
+      bind *:25
+      default_backend postfix_backend
+
+    backend postfix_backend
+      server postfix1 <YOUR_POSTFIX_CLUSTERIP>:25 check

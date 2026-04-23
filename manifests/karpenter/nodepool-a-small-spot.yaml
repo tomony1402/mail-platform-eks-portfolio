@@ -1,0 +1,32 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: mail-nodes-a-small-spot
+spec:
+  weight: 100
+  template:
+    metadata:
+      labels:
+        workload: postfix-a
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: mail-nodes
+      expireAfter: 40m
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["t3.small", "t3a.small", "t2.small"]
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s

@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postfix-service
+  namespace: default
+spec:
+  type: ClusterIP
+  # ★ 記念すべき「固定IP」！ 100.100 でいきましょう
+  clusterIP: <YOUR_POSTFIX_CLUSTERIP>
+  selector:
+    role: postfix
+  ports:
+    - protocol: TCP
+      port: 25
+      targetPort: 25
+
+
+### EKSクラスター IPの範囲でservice IP立てる
+#aws eks describe-cluster \
+#  --region us-east-1 \
+#  --name mail-platform-eks \
+#  --query "cluster.kubernetesNetworkConfig.serviceIpv4Cidr" \
+#  --output text

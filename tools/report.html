@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AWS Cost Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 0.25rem;
+    }
+
+    .subtitle {
+      color: #94a3b8;
+      font-size: 0.9rem;
+      margin-bottom: 2rem;
+    }
+
+    /* Summary cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+    }
+
+    .card-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #64748b;
+      margin-bottom: 0.4rem;
+    }
+
+    .card-value {
+      font-size: 1.9rem;
+      font-weight: 700;
+      color: #38bdf8;
+    }
+
+    .card-value.jpy {
+      color: #34d399;
+    }
+
+    .card-value.services {
+      color: #a78bfa;
+    }
+
+    .card-sub {
+      font-size: 0.8rem;
+      color: #64748b;
+      margin-top: 0.25rem;
+    }
+
+    /* Chart containers */
+    .charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-bottom: 2.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .charts { grid-template-columns: 1fr; }
+    }
+
+    .chart-box {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .chart-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin-bottom: 1rem;
+    }
+
+    .chart-wrap {
+      position: relative;
+      height: 320px;
+    }
+
+    /* Table */
+    .table-box {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+
+    .table-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin-bottom: 1rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    thead th {
+      text-align: left;
+      padding: 0.6rem 1rem;
+      background: #0f172a;
+      color: #64748b;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    tbody tr:nth-child(even) { background: #162032; }
+    tbody tr:hover { background: #1e3a5f; }
+
+    tbody td {
+      padding: 0.65rem 1rem;
+      border-bottom: 1px solid #1e293b;
+      color: #e2e8f0;
+    }
+
+    .amount-cell { text-align: right; font-variant-numeric: tabular-nums; }
+    .bar-cell { min-width: 140px; }
+
+    .bar-bg {
+      background: #334155;
+      border-radius: 4px;
+      height: 8px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      background: linear-gradient(90deg, #38bdf8, #818cf8);
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.4s;
+    }
+
+    footer {
+      margin-top: 2rem;
+      text-align: center;
+      color: #475569;
+      font-size: 0.78rem;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>AWS Cost Report</h1>
+  <p class="subtitle">期間: 2026-XX-01 〜 2026-XX-20 &nbsp;|&nbsp; ※ サンプルデータ</p>
+
+  <!-- Summary cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">合計コスト (USD)</div>
+      <div class="card-value">$XXX.XX</div>
+      <div class="card-sub">今月の累計</div>
+    </div>
+    <div class="card">
+      <div class="card-label">合計コスト (円換算)</div>
+      <div class="card-value jpy">¥XX,XXX</div>
+      <div class="card-sub">1 USD = 150 円</div>
+    </div>
+    <div class="card">
+      <div class="card-label">利用サービス数</div>
+      <div class="card-value services">11</div>
+      <div class="card-sub">コスト発生サービス</div>
+    </div>
+    <div class="card">
+      <div class="card-label">最高コスト日</div>
+      <div class="card-value" style="font-size:1.4rem">2026-XX-XX</div>
+      <div class="card-sub">$XX.XX</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts">
+    <div class="chart-box">
+      <div class="chart-title">サービス別コスト (USD)</div>
+      <div class="chart-wrap">
+        <canvas id="barChart"></canvas>
+      </div>
+    </div>
+    <div class="chart-box">
+      <div class="chart-title">日別コスト推移 (USD)</div>
+      <div class="chart-wrap">
+        <canvas id="lineChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Service table -->
+  <div class="table-box">
+    <div class="table-title">サービス別コスト詳細</div>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>サービス</th>
+          <th class="amount-cell">USD</th>
+          <th class="amount-cell">円換算</th>
+          <th class="amount-cell">割合</th>
+          <th>比率</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td>1</td>
+          <td>Amazon Elastic Compute Cloud - Compute</td>
+          <td class="amount-cell">$XX.XX</td>
+          <td class="amount-cell">¥XX,XXX</td>
+          <td class="amount-cell">45.8%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:45.8%"></div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td>2</td>
+          <td>Amazon Virtual Private Cloud</td>
+          <td class="amount-cell">$XX.XX</td>
+          <td class="amount-cell">¥X,XXX</td>
+          <td class="amount-cell">16.4%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:16.4%"></div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td>3</td>
+          <td>Amazon Elastic Container Service for Kubernetes</td>
+          <td class="amount-cell">$XX.XX</td>
+          <td class="amount-cell">¥X,XXX</td>
+          <td class="amount-cell">13.4%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:13.4%"></div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td>4</td>
+          <td>Tax</td>
+          <td class="amount-cell">$XX.XX</td>
+          <td class="amount-cell">¥X,XXX</td>
+          <td class="amount-cell">9.1%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:9.1%"></div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td>5</td>
+          <td>EC2 - Other</td>
+          <td class="amount-cell">$XX.XX</td>
+          <td class="amount-cell">¥X,XXX</td>
+          <td class="amount-cell">9.1%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:9.1%"></div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td>6</td>
+          <td>AmazonCloudWatch</td>
+          <td class="amount-cell">$XX.XX</td>
+          <td class="amount-cell">¥X,XXX</td>
+          <td class="amount-cell">5.3%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:5.3%"></div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td>7</td>
+          <td>AWS Cost Explorer</td>
+          <td class="amount-cell">$X.XX</td>
+          <td class="amount-cell">¥XXX</td>
+          <td class="amount-cell">0.6%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:0.6%"></div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td>8</td>
+          <td>AWS Key Management Service</td>
+          <td class="amount-cell">$X.XX</td>
+          <td class="amount-cell">¥XX</td>
+          <td class="amount-cell">0.2%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:0.2%"></div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td>9</td>
+          <td>Amazon Simple Storage Service</td>
+          <td class="amount-cell">$X.XX</td>
+          <td class="amount-cell">¥XX</td>
+          <td class="amount-cell">0.1%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:0.1%"></div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td>10</td>
+          <td>Amazon EC2 Container Registry (ECR)</td>
+          <td class="amount-cell">$X.XX</td>
+          <td class="amount-cell">¥1</td>
+          <td class="amount-cell">0.0%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:0.0%"></div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td>11</td>
+          <td>AWS CloudShell</td>
+          <td class="amount-cell">$0.0000</td>
+          <td class="amount-cell">¥0</td>
+          <td class="amount-cell">0.0%</td>
+          <td class="bar-cell">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:0.0%"></div>
+            </div>
+          </td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+
+  <footer>Generated by cost-viewer.py &nbsp;&middot;&nbsp; AWS Cost Explorer API</footer>
+
+  <script>
+    // ---------- Bar chart: service costs ----------
+    const barLabels = ["Amazon Elastic Compute Cloud - Compute", "Amazon Virtual Private Cloud", "Amazon Elastic Container Service for Kubernetes", "Tax", "EC2 - Other", "AmazonCloudWatch", "AWS Cost Explorer", "AWS Key Management Service", "Amazon Simple Storage Service", "Amazon EC2 Container Registry (ECR)", "AWS CloudShell"];
+    const barData   = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; // sample: actual values omitted
+
+    new Chart(document.getElementById('barChart'), {
+      type: 'bar',
+      data: {
+        labels: barLabels,
+        datasets: [{
+          label: 'Cost (USD)',
+          data: barData,
+          backgroundColor: 'rgba(56, 189, 248, 0.75)',
+          borderColor: '#38bdf8',
+          borderWidth: 1,
+          borderRadius: 4,
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` $${ctx.parsed.x.toFixed(4)}`
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#94a3b8', callback: v => '$' + v },
+            grid: { color: '#1e293b' }
+          },
+          y: {
+            ticks: {
+              color: '#94a3b8',
+              font: { size: 11 },
+              callback: function(val) {
+                const lbl = barLabels[val];
+                return lbl && lbl.length > 28 ? lbl.substring(0, 26) + '…' : lbl;
+              }
+            },
+            grid: { color: '#334155' }
+          }
+        }
+      }
+    });
+
+    // ---------- Line chart: daily costs ----------
+    const lineLabels = ["Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6", "Day 7", "Day 8", "Day 9", "Day 10", "Day 11", "Day 12", "Day 13", "Day 14", "Day 15", "Day 16", "Day 17", "Day 18", "Day 19"];
+    const lineData   = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; // sample: actual values omitted
+
+    new Chart(document.getElementById('lineChart'), {
+      type: 'line',
+      data: {
+        labels: lineLabels,
+        datasets: [{
+          label: 'Daily Cost (USD)',
+          data: lineData,
+          borderColor: '#818cf8',
+          backgroundColor: 'rgba(129, 140, 248, 0.15)',
+          borderWidth: 2,
+          pointBackgroundColor: '#818cf8',
+          pointRadius: 3,
+          fill: true,
+          tension: 0.3,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` $${ctx.parsed.y.toFixed(4)}`
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: '#94a3b8',
+              maxTicksLimit: 10,
+              callback: function(val) {
+                const lbl = lineLabels[val];
+                return lbl ? lbl.substring(5) : '';   // MM-DD
+              }
+            },
+            grid: { color: '#1e293b' }
+          },
+          y: {
+            ticks: { color: '#94a3b8', callback: v => '$' + v },
+            grid: { color: '#334155' }
+          }
+        }
+      }
+    });
+  </script>
+</body>
+</html>

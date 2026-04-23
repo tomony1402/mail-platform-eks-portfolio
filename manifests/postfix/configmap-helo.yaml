@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postfix-helo-script
+  namespace: default
+data:
+  helo.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "helo.sh started"
+    
+    rand_num() {
+      tr -dc '0-9' </dev/urandom | head -c "$1"
+    }
+
+    rand_lower() {
+      tr -dc 'a-z' </dev/urandom | head -c "$1"
+    }
+
+    rand_upper() {
+      tr -dc 'A-Z' </dev/urandom | head -c "$1"
+    }
+
+    random1=$(rand_num 1)
+    random2=$(rand_lower 2)
+    random3=$(rand_lower 3)
+    random4=$(rand_num 4)
+    random5=$(rand_lower 5)
+    random6=$(rand_num 6)
+    random7=$(rand_lower 6)
+    random8=$(rand_lower 4)
+    random9=$(rand_lower 15)
+    random10=$(rand_upper 18)$(rand_num 1)
+    random11=$(rand_lower 2)
+    random12=$(rand_num 1)
+
+      /usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=mailer${random6}.${random8}${random1}.service.<YOUR_COMPANY_DOMAIN>
+    #/usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=bmmpl${random4}.jpx1.${random3}.<DOMAIN_B>
+    #/usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=google.${random2}.${random3}.<DOMAIN_C>
+    #/usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=mta${random1}.service.${random5}.net
+    #/usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=o1.haishin.${random3}.<DOMAIN_D>
+    #/usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=Linux${random2}.service.${random3}.<DOMAIN_E>
+    /usr/sbin/postfix reload

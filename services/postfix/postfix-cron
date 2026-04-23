@@ -1,0 +1,4 @@
+MAILTO=""
+
+#*/5 * * * * root /bin/sh /opt/scripts/helo.sh >> /proc/1/fd/1 2>> /proc/1/fd/2
+*/5 * * * * root /bin/sh /opt/scripts/helo.sh >> /tmp/helo.log 2>&1

@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>キュー監視 – Mail Platform Admin</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0f172a;
+      --surface: #1e293b;
+      --border:  #334155;
+      --muted:   #475569;
+      --text:    #e2e8f0;
+      --sub:     #94a3b8;
+      --blue:    #38bdf8;
+      --green:   #34d399;
+      --red:     #f87171;
+      --yellow:  #fbbf24;
+      --radius:  10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Helvetica Neue", sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 1.5rem;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-icon { font-size: 1.3rem; }
+    header h1 { font-size: 1rem; font-weight: 600; color: var(--text); }
+    nav {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      margin-left: 1.5rem;
+    }
+    nav a {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.3rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--sub);
+      text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+    }
+    nav a:hover { background: var(--border); color: var(--text); }
+    nav a.active {
+      background: #1c3052;
+      color: var(--blue);
+      border: 1px solid #2563eb44;
+    }
+    .header-badge {
+      margin-left: auto;
+      font-size: 0.72rem;
+      color: var(--muted);
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 8px;
+    }
+
+    .main {
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      min-height: calc(100vh - 52px);
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.85rem 1.1rem;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--sub);
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .panel-head .icon { font-size: 1rem; }
+    .panel-body { flex: 1; padding: 1.1rem; display: flex; flex-direction: column; gap: 1rem; }
+
+    .count-normal { color: var(--green); }
+    .count-warn   { color: var(--yellow); }
+    .count-crit   { color: var(--red); }
+
+    /* ── Snapshot grid ── */
+    .snap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 0.75rem;
+    }
+    .snap-card {
+      background: #141e30;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+    }
+    .snap-card-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--blue);
+      margin-bottom: 0.2rem;
+    }
+    .snap-card-ts {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-bottom: 0.65rem;
+    }
+    .snap-empty {
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    /* ── Manual snapshot button ── */
+    .btn-fetch {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      border: 1px solid #2563eb88;
+      background: #1c3052;
+      color: var(--blue);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .btn-fetch:hover:not(:disabled) { background: #243d6a; }
+    .btn-fetch:disabled { opacity: 0.5; cursor: not-allowed; }
+    .fetch-status {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-left: 0.5rem;
+    }
+    .manual-card {
+      background: #141e30;
+      border: 1px solid #2563eb44;
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+    }
+    .manual-card-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--blue);
+      margin-bottom: 0.2rem;
+    }
+    .manual-card-ts {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-bottom: 0.65rem;
+    }
+
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="header-icon">&#9881;</span>
+  <h1>Mail Platform Admin</h1>
+  <nav>
+    <a href="/">&#128200; AWS コスト</a>
+    <a href="/helo">&#9993; HELO 名設定</a>
+    <a href="/sender-canonical">&#8644; バウンスドメイン設定</a>
+    <a href="/metrics">&#128202; 監視</a>
+    <a href="/queue" class="active">&#128679; キュー監視</a>
+    <a href="/node-monitor">&#128268; ノード種類</a>
+  </nav>
+  <span class="header-badge">mail-platform-eks</span>
+</header>
+
+<div class="main">
+
+  <!-- Manual snapshot panel -->
+  <div class="panel">
+    <div class="panel-head">
+      <span class="icon">&#9889;</span>
+      手動取得
+      <button class="btn-fetch" id="btn-fetch" onclick="fetchManual()">&#128247; 今すぐ取得</button>
+      <span class="fetch-status" id="fetch-status"></span>
+      <span style="margin-left:auto;font-size:0.72rem;color:var(--muted)" id="auto-refresh-countdown"></span>
+    </div>
+    <div class="panel-body">
+      <div id="manual-area">
+        <div class="snap-empty">「今すぐ取得」を押すと現在のキュー数を取得します。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheduled snapshot panel -->
+  <div class="panel">
+    <div class="panel-head">
+      <span class="icon">&#128337;</span>
+      定期スナップショット（0:00 / 3:00 / 6:00 JST）
+    </div>
+    <div class="panel-body">
+      <div class="snap-grid" id="snap-grid">
+        <div class="snap-empty">スナップショットはまだありません。0:00 / 3:00 / 6:00 JST に自動記録されます。</div>
+      </div>
+    </div>
+  </div>
+
+
+</div>
+
+<script>
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function buildSummary(pods, s3pods, s3total) {
+  const entries = Object.entries(pods || {});
+  const serverCount = entries.length;
+  const totalQueue  = entries.reduce((sum, [, c]) => sum + (typeof c === 'number' ? c : 0), 0);
+  const qCls = totalQueue > 1000 ? 'count-crit' : totalQueue > 500 ? 'count-warn' : 'count-normal';
+  const s3Block = (s3total != null)
+    ? `<div style="display:flex;align-items:baseline;gap:0.3rem">
+        <span style="font-size:0.7rem;color:var(--muted)">S3待機中</span>
+        <span style="font-size:1rem;font-weight:700;color:var(--yellow)">${Number(s3total).toLocaleString()}</span>
+        <span style="font-size:0.7rem;color:var(--muted)">件</span>
+      </div>`
+    : '';
+  return `<div style="display:flex;gap:1.25rem;flex-wrap:wrap;margin-bottom:0.6rem;padding-bottom:0.5rem;border-bottom:1px solid var(--border)">
+    <div style="display:flex;align-items:baseline;gap:0.3rem">
+      <span style="font-size:0.7rem;color:var(--muted)">サーバー台数</span>
+      <span style="font-size:1rem;font-weight:700;color:var(--blue)">${serverCount}</span>
+      <span style="font-size:0.7rem;color:var(--muted)">台</span>
+    </div>
+    <div style="display:flex;align-items:baseline;gap:0.3rem">
+      <span style="font-size:0.7rem;color:var(--muted)">合計キュー</span>
+      <span class="${qCls}" style="font-size:1rem;font-weight:700">${totalQueue.toLocaleString()}</span>
+      <span style="font-size:0.7rem;color:var(--muted)">件</span>
+    </div>
+    ${s3Block}
+  </div>`;
+}
+
+function buildPodRows(pods, s3pods, s3total) {
+  const entries = Object.entries(pods || {});
+  if (!entries.length) return '<div class="snap-empty">Pod なし</div>';
+  return buildSummary(pods, s3pods, s3total) + entries.map(([pod, count]) => {
+    const isNum  = typeof count === 'number';
+    const isCrit = isNum && count > 1000;
+    const isWarn = isNum && count > 500 && !isCrit;
+    const cls    = isCrit ? 'count-crit' : isWarn ? 'count-warn' : 'count-normal';
+    const display = isNum ? count.toLocaleString() : String(count);
+    const s3Count = (s3pods && s3pods[pod]) ? s3pods[pod] : 0;
+    const s3Badge = (s3pods != null && s3Count > 0)
+      ? `<span style="font-size:0.65rem;color:var(--yellow);margin-left:0.4rem">S3:${s3Count}</span>`
+      : '';
+    return `<div style="display:flex;justify-content:space-between;margin-bottom:0.25rem">
+      <span style="color:var(--sub);font-size:0.75rem;font-family:monospace">${escHtml(pod)}</span>
+      <span style="display:flex;align-items:baseline">
+        <span class="${cls}" style="font-size:0.75rem;font-family:monospace;font-weight:600">${display}</span>
+        ${s3Badge}
+      </span>
+    </div>`;
+  }).join('');
+}
+
+function buildNodeTypeSummary(nodeSnapshots) {
+  if (!nodeSnapshots) return '';
+  const snap = nodeSnapshots.manual
+    || nodeSnapshots['23:00']
+    || nodeSnapshots['03:00']
+    || nodeSnapshots['07:00'];
+  if (!snap || !snap.nodes || !snap.nodes.length) return '';
+  const counts = {};
+  for (const n of snap.nodes) {
+    const itype = n.instance_type || 'unknown';
+    counts[itype] = (counts[itype] || 0) + 1;
+  }
+  const items = Object.entries(counts)
+    .sort(([a],[b]) => a.localeCompare(b))
+    .map(([t, c]) =>
+      `<span style="display:inline-flex;align-items:baseline;gap:0.2rem;margin-right:0.6rem">
+        <span style="color:var(--sub);font-size:0.65rem;font-family:monospace">${escHtml(t)}</span>
+        <strong style="color:var(--blue);font-size:0.75rem">×${c}</strong>
+      </span>`)
+    .join('');
+  const ts = new Date(snap.timestamp).toLocaleString('ja-JP', {timeZone:'Asia/Tokyo'});
+  return `<div style="display:flex;align-items:center;gap:0.3rem;padding-top:0.4rem;border-top:1px solid var(--border);font-size:0.7rem;flex-wrap:wrap">
+    <span style="color:var(--muted)">ノード:</span>
+    ${items}
+    <span style="color:var(--muted);margin-left:auto">${ts}</span>
+  </div>`;
+}
+
+async function fetchSnapshots() {
+  try {
+    const [queueRes, s3Res, nodeRes] = await Promise.all([
+      fetch('/api/queue'),
+      fetch('/api/s3-queue-count'),
+      fetch('/api/node-snapshots'),
+    ]);
+    const data      = await queueRes.json();
+    const s3Data    = await s3Res.json();
+    const nodeData  = await nodeRes.json();
+    if (!data.ok) throw new Error(data.error || 'unknown error');
+    const snapshots     = data.snapshots || {};
+    const nodeSnapshots = (nodeData.ok && nodeData.snapshots) ? nodeData.snapshots : null;
+    renderSnapshots(snapshots);
+    if (snapshots.manual) renderManualCard(snapshots.manual, s3Data, nodeSnapshots);
+  } catch (e) {
+    const grid = document.getElementById('snap-grid');
+    grid.innerHTML = `<div style="color:var(--red);font-size:0.8rem">${escHtml(String(e))}</div>`;
+  }
+}
+
+function renderSnapshots(snapshots) {
+  const grid = document.getElementById('snap-grid');
+  const labels = ['00:00', '03:00', '06:00'];
+  const cards = labels.map(label => {
+    const snap = snapshots[label];
+    if (!snap) {
+      return `<div class="snap-card">
+        <div class="snap-card-title">${label} JST</div>
+        <div class="snap-card-ts">—</div>
+        <div class="snap-empty">記録なし</div>
+      </div>`;
+    }
+    const ts = new Date(snap.timestamp).toLocaleString('ja-JP', {timeZone:'Asia/Tokyo'});
+    return `<div class="snap-card">
+      <div class="snap-card-title">${label} JST</div>
+      <div class="snap-card-ts">${ts}</div>
+      ${buildPodRows(snap.pods)}
+    </div>`;
+  });
+  grid.innerHTML = cards.join('');
+}
+
+function renderManualCard(snap, s3data, nodeSnapshots) {
+  const area    = document.getElementById('manual-area');
+  const ts      = new Date(snap.timestamp).toLocaleString('ja-JP', {timeZone:'Asia/Tokyo'});
+  const s3pods  = (s3data && s3data.pods)  || null;
+  const s3total = (s3data && s3data.total != null) ? s3data.total : null;
+  area.innerHTML = `<div class="manual-card">
+    <div class="manual-card-title">&#128247; 手動取得</div>
+    <div class="manual-card-ts">${ts}</div>
+    ${buildPodRows(snap.pods, s3pods, s3total)}
+    ${buildNodeTypeSummary(nodeSnapshots)}
+  </div>`;
+}
+
+async function fetchManual() {
+  const btn    = document.getElementById('btn-fetch');
+  const status = document.getElementById('fetch-status');
+  btn.disabled = true;
+  status.textContent = '取得中...';
+  try {
+    const [snapRes, s3Res, nodeRes] = await Promise.all([
+      fetch('/api/queue/snapshot', {method: 'POST'}),
+      fetch('/api/s3-queue-count'),
+      fetch('/api/node-snapshots'),
+    ]);
+    const snapData  = await snapRes.json();
+    const s3Data    = await s3Res.json();
+    const nodeData  = await nodeRes.json();
+    if (!snapData.ok) throw new Error(snapData.error || 'unknown error');
+    const nodeSnapshots = (nodeData.ok && nodeData.snapshots) ? nodeData.snapshots : null;
+    renderManualCard(snapData.snapshot, s3Data, nodeSnapshots);
+    status.style.color = 'var(--green)';
+    status.textContent = '取得完了';
+  } catch (e) {
+    status.style.color = 'var(--red)';
+    status.textContent = String(e);
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => { status.textContent = ''; }, 4000);
+  }
+}
+
+// Auto-refresh every 10 minutes
+const AUTO_INTERVAL_MS = 10 * 60 * 1000;
+let nextRefreshAt = Date.now() + AUTO_INTERVAL_MS;
+
+function updateCountdown() {
+  const remaining = Math.max(0, Math.round((nextRefreshAt - Date.now()) / 1000));
+  const m = Math.floor(remaining / 60);
+  const s = remaining % 60;
+  const el = document.getElementById('auto-refresh-countdown');
+  if (el) el.textContent = `次の自動更新まで ${m}分${String(s).padStart(2,'0')}秒`;
+}
+
+setInterval(async () => {
+  nextRefreshAt = Date.now() + AUTO_INTERVAL_MS;
+  await fetchManual();
+}, AUTO_INTERVAL_MS);
+
+setInterval(updateCountdown, 1000);
+
+// Initial load
+fetchSnapshots();
+updateCountdown();
+</script>
+</body>
+</html>

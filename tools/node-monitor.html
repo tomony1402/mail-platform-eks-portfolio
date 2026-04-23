@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ノード種類 – Mail Platform Admin</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0f172a;
+      --surface: #1e293b;
+      --border:  #334155;
+      --muted:   #475569;
+      --text:    #e2e8f0;
+      --sub:     #94a3b8;
+      --blue:    #38bdf8;
+      --green:   #34d399;
+      --red:     #f87171;
+      --yellow:  #fbbf24;
+      --radius:  10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Helvetica Neue", sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 1.5rem;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-icon { font-size: 1.3rem; }
+    header h1 { font-size: 1rem; font-weight: 600; color: var(--text); }
+    nav {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      margin-left: 1.5rem;
+    }
+    nav a {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.3rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--sub);
+      text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+    }
+    nav a:hover { background: var(--border); color: var(--text); }
+    nav a.active {
+      background: #1c3052;
+      color: var(--blue);
+      border: 1px solid #2563eb44;
+    }
+    .header-badge {
+      margin-left: auto;
+      font-size: 0.72rem;
+      color: var(--muted);
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 8px;
+    }
+
+    .main {
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      min-height: calc(100vh - 52px);
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.85rem 1.1rem;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--sub);
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .panel-head .icon { font-size: 1rem; }
+    .panel-body { flex: 1; padding: 1.1rem; display: flex; flex-direction: column; gap: 1rem; }
+
+    /* ── Snapshot grid ── */
+    .snap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 0.75rem;
+    }
+    .snap-card {
+      background: #141e30;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+    }
+    .snap-card-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--blue);
+      margin-bottom: 0.2rem;
+    }
+    .snap-card-ts {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-bottom: 0.65rem;
+    }
+    .snap-empty {
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    /* ── Fetch button ── */
+    .btn-fetch {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      border: 1px solid #2563eb88;
+      background: #1c3052;
+      color: var(--blue);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .btn-fetch:hover:not(:disabled) { background: #243d6a; }
+    .btn-fetch:disabled { opacity: 0.5; cursor: not-allowed; }
+    .fetch-status {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-left: 0.5rem;
+    }
+
+    /* ── Node snapshot table ── */
+    .node-type-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.2rem 0;
+      border-bottom: 1px solid #1e2d40;
+    }
+    .node-type-row:last-child { border-bottom: none; }
+    .node-type-label {
+      font-size: 0.75rem;
+      font-family: monospace;
+      color: var(--sub);
+    }
+    .node-type-counts {
+      display: flex;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      font-family: monospace;
+      font-weight: 600;
+    }
+    .badge-spot { color: var(--yellow); }
+    .badge-od   { color: var(--blue); }
+    .badge-unk  { color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="header-icon">&#9881;</span>
+  <h1>Mail Platform Admin</h1>
+  <nav>
+    <a href="/">&#128200; AWS コスト</a>
+    <a href="/helo">&#9993; HELO 名設定</a>
+    <a href="/sender-canonical">&#8644; バウンスドメイン設定</a>
+    <a href="/metrics">&#128202; 監視</a>
+    <a href="/queue">&#128679; キュー監視</a>
+    <a href="/node-monitor" class="active">&#128268; ノード種類</a>
+  </nav>
+  <span class="header-badge">mail-platform-eks</span>
+</header>
+
+<div class="main">
+
+  <!-- Manual fetch panel -->
+  <div class="panel">
+    <div class="panel-head">
+      <span class="icon">&#9889;</span>
+      手動取得
+      <button class="btn-fetch" id="btn-node-fetch" onclick="fetchNodeManual()">&#128268; 今すぐ取得</button>
+      <span class="fetch-status" id="node-fetch-status"></span>
+    </div>
+    <div class="panel-body">
+      <div id="node-manual-area">
+        <div class="snap-empty">「今すぐ取得」を押すと現在のノード構成を取得します。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheduled snapshot panel -->
+  <div class="panel">
+    <div class="panel-head">
+      <span class="icon">&#128337;</span>
+      定期スナップショット（23:00 / 03:00 / 07:00 JST）
+    </div>
+    <div class="panel-body">
+      <div class="snap-grid" id="node-snap-grid">
+        <div class="snap-empty">スナップショットはまだありません。23:00 / 03:00 / 07:00 JST に自動記録されます。</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function buildNodeCard(snap, title, borderColor) {
+  const ts    = new Date(snap.timestamp).toLocaleString('ja-JP', {timeZone:'Asia/Tokyo'});
+  const nodes = snap.nodes || [];
+  const summary = {};
+  for (const node of nodes) {
+    const itype = node.instance_type || 'unknown';
+    const ctype = (node.capacity_type || 'UNKNOWN').toUpperCase();
+    if (!summary[itype]) summary[itype] = {spot: 0, on_demand: 0, unknown: 0};
+    if (ctype === 'SPOT') summary[itype].spot++;
+    else if (ctype === 'ON_DEMAND') summary[itype].on_demand++;
+    else summary[itype].unknown++;
+  }
+  const rows = Object.entries(summary).sort(([a],[b]) => a.localeCompare(b)).map(([itype, c]) =>
+    `<div class="node-type-row">
+      <span class="node-type-label">${escHtml(itype)}</span>
+      <span class="node-type-counts">
+        <span class="badge-spot">Spot:${c.spot}</span>
+        <span class="badge-od">OD:${c.on_demand}</span>
+        ${c.unknown > 0 ? `<span class="badge-unk">?:${c.unknown}</span>` : ''}
+      </span>
+    </div>`
+  ).join('');
+  const spotTotal = nodes.filter(n => (n.capacity_type||'').toUpperCase() === 'SPOT').length;
+  const odTotal   = nodes.filter(n => (n.capacity_type||'').toUpperCase() === 'ON_DEMAND').length;
+  const border    = borderColor || 'var(--border)';
+  return `<div class="snap-card" style="border-color:${border}">
+    <div class="snap-card-title">${title}</div>
+    <div class="snap-card-ts">${ts}</div>
+    <div style="display:flex;gap:1rem;margin-bottom:0.5rem;padding-bottom:0.4rem;border-bottom:1px solid var(--border);font-size:0.72rem">
+      <span style="color:var(--muted)">計 <strong style="color:var(--text)">${nodes.length}</strong> 台</span>
+      <span class="badge-spot">Spot: ${spotTotal}</span>
+      <span class="badge-od">OD: ${odTotal}</span>
+    </div>
+    ${rows || '<div class="snap-empty">ノードなし</div>'}
+  </div>`;
+}
+
+async function fetchNodeSnapshots() {
+  try {
+    const res  = await fetch('/api/node-snapshots');
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'unknown error');
+    renderNodeSnapshots(data.snapshots || {});
+  } catch (e) {
+    document.getElementById('node-snap-grid').innerHTML =
+      `<div style="color:var(--red);font-size:0.8rem">${escHtml(String(e))}</div>`;
+  }
+}
+
+function renderNodeSnapshots(snapshots) {
+  const grid   = document.getElementById('node-snap-grid');
+  const labels = ['23:00', '03:00', '07:00'];
+  const cards  = labels.map(label => {
+    const snap = snapshots[label];
+    if (!snap) {
+      return `<div class="snap-card">
+        <div class="snap-card-title">${label} JST</div>
+        <div class="snap-card-ts">—</div>
+        <div class="snap-empty">記録なし</div>
+      </div>`;
+    }
+    return buildNodeCard(snap, `${label} JST`);
+  });
+  // manual スナップショットが定期分より新しければ先頭に追加表示
+  if (snapshots.manual) {
+    const area = document.getElementById('node-manual-area');
+    if (!area.dataset.userFetched) {
+      area.innerHTML = buildNodeCard(snapshots.manual, '&#128247; 手動取得（前回）', '#2563eb44');
+    }
+  }
+  grid.innerHTML = cards.join('');
+}
+
+async function fetchNodeManual() {
+  const btn    = document.getElementById('btn-node-fetch');
+  const status = document.getElementById('node-fetch-status');
+  btn.disabled = true;
+  status.style.color = 'var(--muted)';
+  status.textContent = '取得中...';
+  try {
+    const res  = await fetch('/api/node-snapshot/fetch', {method: 'POST'});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'unknown error');
+    const area = document.getElementById('node-manual-area');
+    area.dataset.userFetched = '1';
+    area.innerHTML = buildNodeCard(data.snapshot, '&#128247; 手動取得', '#2563eb88');
+    status.style.color = 'var(--green)';
+    status.textContent = '取得完了';
+  } catch (e) {
+    status.style.color = 'var(--red)';
+    status.textContent = String(e);
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => { status.textContent = ''; }, 4000);
+  }
+}
+
+// Initial load
+fetchNodeSnapshots();
+</script>
+</body>
+</html>

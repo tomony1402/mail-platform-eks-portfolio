@@ -1,0 +1,402 @@
+---
+# ServiceAccount used by nightmode CronJobs
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nightmode-controller
+  namespace: kube-system
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:role/nightmode-controller-role
+---
+# ClusterRole: scale deployments + queue monitor
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nightmode-deployment-scaler
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "patch"]
+---
+# Bind ClusterRole to the ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nightmode-deployment-scaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nightmode-deployment-scaler
+subjects:
+  - kind: ServiceAccount
+    name: nightmode-controller
+    namespace: kube-system
+---
+# Night mode ON: 22:00 JST (13:00 UTC) — scale down to 10 replicas
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightmode-on
+  namespace: kube-system
+spec:
+  schedule: "0 13 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: nightmode-controller
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  kubectl scale deployment postfix-deployment-a --replicas=8 -n default
+                  kubectl scale deployment postfix-deployment-b --replicas=8 -n default
+---
+# Deep night mode ON: 02:00 JST (17:00 UTC) — scale down to 5 replicas
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: deepnight-on
+  namespace: kube-system
+spec:
+  schedule: "0 17 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: nightmode-controller
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  kubectl scale deployment postfix-deployment-a --replicas=4 -n default
+                  kubectl scale deployment postfix-deployment-b --replicas=4 -n default
+---
+# Deep night mode OFF: 06:00 JST (21:00 UTC) — scale up to 10 replicas
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: deepnight-off
+  namespace: kube-system
+spec:
+  schedule: "0 21 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: nightmode-controller
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  kubectl scale deployment postfix-deployment-a --replicas=8 -n default
+                  kubectl scale deployment postfix-deployment-b --replicas=8 -n default
+---
+# Night mode OFF: 08:00 JST (23:00 UTC) — scale up to 10 replicas
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightmode-off
+  namespace: kube-system
+spec:
+  schedule: "0 23 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: nightmode-controller
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  kubectl scale deployment postfix-deployment-a --replicas=35 -n default
+                  kubectl scale deployment postfix-deployment-b --replicas=35 -n default
+---
+# Queue monitor: every 2 minutes
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: queue-monitor
+  namespace: kube-system
+spec:
+  schedule: "*/2 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: nightmode-controller
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: alpine/k8s:1.30.4
+              env:
+                - name: S3_RECOVERY_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: mail-platform-secret
+                      key: s3_recovery_bucket
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  BUCKET="${S3_RECOVERY_BUCKET}"
+                  PARALLEL=20
+
+                  # 前回ジョブで生成された0バイトファイルを削除
+                  echo "Cleaning up zero-byte files from S3..."
+                  aws s3 ls "s3://$BUCKET/pending/" --recursive \
+                    | awk -v b="s3://$BUCKET/" '$3 == 0 {print b $4}' \
+                    | xargs -r -P 20 -I{} aws s3 rm {} 2>/dev/null || true
+
+                  hour=$(( ( 10#$(date -u +%H) + 9 ) % 24 ))
+
+                  save_and_delete() {
+                    pod=$1
+                    count=$2
+                    node=$(kubectl get pod -n default "$pod" -o jsonpath='{.spec.nodeName}')
+
+                    if [ "$hour" -ge 9 ] && [ "$hour" -lt 20 ]; then
+                      # 9:00〜20:00 JST: S3保存してからノード削除
+                      echo "[$pod] $count queued mails. Saving to S3 (parallel=$PARALLEL)..."
+
+                      queue_ids=$(kubectl exec -n default "$pod" -- postqueue -p 2>/dev/null \
+                        | awk '/^[A-F0-9]/{print $1}' | tr -d '*!')
+
+                      jobs=0
+                      for qid in $queue_ids; do
+                        (
+                          tmpfile=$(mktemp)
+                          kubectl exec -n default "$pod" -- postcat -q "$qid" 2>/dev/null > "$tmpfile"
+                          if [ -s "$tmpfile" ]; then
+                            # バウンスメール（sender空 or MAILER-DAEMON）はスキップ
+                            sender=$(awk '
+                              /^\*\*\* ENVELOPE/{e=1} /^\*\*\* MESSAGE/{e=0}
+                              e && /^sender:/{print $2; exit}
+                            ' "$tmpfile")
+                            if [ -z "$sender" ] || echo "$sender" | grep -qi "MAILER-DAEMON"; then
+                              echo "[$pod] skip bounce: $qid"
+                            else
+                              aws s3 cp "$tmpfile" "s3://$BUCKET/pending/$pod/$qid.eml" || true
+                            fi
+                          fi
+                          rm -f "$tmpfile"
+                        ) &
+                        jobs=$((jobs + 1))
+                        if [ "$jobs" -ge "$PARALLEL" ]; then
+                          wait
+                          jobs=0
+                        fi
+                      done
+                      wait
+
+                      saved=$(aws s3 ls "s3://$BUCKET/pending/$pod/" | awk '$3>0' | wc -l)
+                      echo "[$pod] S3 save complete ($saved files). Deleting node $node (queue: $count)"
+                      kubectl delete node "$node"
+                    else
+                      # 20:00〜9:00 JST: 即ノード削除（S3保存スキップ）
+                      echo "[$pod] $count queued mails. Night mode: skipping S3, deleting node $node"
+                      kubectl delete node "$node"
+                    fi
+                  }
+
+                  for pod in $(kubectl get pods -n default -l role=postfix | awk 'NR>1{print $1}'); do
+                    count=$(kubectl exec -n default "$pod" -- postqueue -p 2>/dev/null | grep -c "^[A-F0-9]" || true)
+                    if [ "$count" -gt 1000 ]; then
+                      save_and_delete "$pod" "$count" &
+                    fi
+                  done
+                  wait
+---
+# Node snapshot: 23:00 JST (14:00 UTC)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: node-snapshot-23jst
+  namespace: kube-system
+spec:
+  schedule: "0 14 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: nightmode-controller
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: alpine/k8s:1.30.4
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  LABEL="23:00"
+                  TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+                  kubectl get nodes -o go-template='{{range .items}}{{.metadata.name}}{{"\t"}}{{index .metadata.labels "node.kubernetes.io/instance-type"}}{{"\t"}}{{index .metadata.labels "eks.amazonaws.com/capacityType"}}{{"\n"}}{{end}}' > /tmp/nodes.txt
+
+                  NODES_JSON=$(awk '{
+                    name=$1; itype=$2; ctype=$3
+                    if (ctype == "") ctype = "UNKNOWN"
+                    if (NR > 1) printf ","
+                    printf "{\"name\":\"%s\",\"instance_type\":\"%s\",\"capacity_type\":\"%s\"}", name, itype, ctype
+                  }' /tmp/nodes.txt)
+
+                  PAYLOAD="{\"label\":\"${LABEL}\",\"timestamp\":\"${TS}\",\"nodes\":[${NODES_JSON}]}"
+
+                  kubectl get configmap node-snapshots -n kube-system 2>/dev/null || \
+                    kubectl create configmap node-snapshots -n kube-system
+
+                  PAYLOAD_STR=$(printf '%s' "$PAYLOAD" | jq -Rs .)
+                  kubectl patch configmap node-snapshots -n kube-system --type=merge \
+                    -p "{\"data\":{\"${LABEL}\":${PAYLOAD_STR}}}"
+
+                  echo "Node snapshot (${LABEL} JST) saved to ConfigMap successfully"
+---
+# Node snapshot: 03:00 JST (18:00 UTC)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: node-snapshot-03jst
+  namespace: kube-system
+spec:
+  schedule: "0 18 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: nightmode-controller
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: alpine/k8s:1.30.4
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  LABEL="03:00"
+                  TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+                  kubectl get nodes -o go-template='{{range .items}}{{.metadata.name}}{{"\t"}}{{index .metadata.labels "node.kubernetes.io/instance-type"}}{{"\t"}}{{index .metadata.labels "eks.amazonaws.com/capacityType"}}{{"\n"}}{{end}}' > /tmp/nodes.txt
+
+                  NODES_JSON=$(awk '{
+                    name=$1; itype=$2; ctype=$3
+                    if (ctype == "") ctype = "UNKNOWN"
+                    if (NR > 1) printf ","
+                    printf "{\"name\":\"%s\",\"instance_type\":\"%s\",\"capacity_type\":\"%s\"}", name, itype, ctype
+                  }' /tmp/nodes.txt)
+
+                  PAYLOAD="{\"label\":\"${LABEL}\",\"timestamp\":\"${TS}\",\"nodes\":[${NODES_JSON}]}"
+
+                  kubectl get configmap node-snapshots -n kube-system 2>/dev/null || \
+                    kubectl create configmap node-snapshots -n kube-system
+
+                  PAYLOAD_STR=$(printf '%s' "$PAYLOAD" | jq -Rs .)
+                  kubectl patch configmap node-snapshots -n kube-system --type=merge \
+                    -p "{\"data\":{\"${LABEL}\":${PAYLOAD_STR}}}"
+
+                  echo "Node snapshot (${LABEL} JST) saved to ConfigMap successfully"
+---
+# Node snapshot: 07:00 JST (22:00 UTC)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: node-snapshot-07jst
+  namespace: kube-system
+spec:
+  schedule: "0 22 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: nightmode-controller
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: alpine/k8s:1.30.4
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  LABEL="07:00"
+                  TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+                  kubectl get nodes -o go-template='{{range .items}}{{.metadata.name}}{{"\t"}}{{index .metadata.labels "node.kubernetes.io/instance-type"}}{{"\t"}}{{index .metadata.labels "eks.amazonaws.com/capacityType"}}{{"\n"}}{{end}}' > /tmp/nodes.txt
+
+                  NODES_JSON=$(awk '{
+                    name=$1; itype=$2; ctype=$3
+                    if (ctype == "") ctype = "UNKNOWN"
+                    if (NR > 1) printf ","
+                    printf "{\"name\":\"%s\",\"instance_type\":\"%s\",\"capacity_type\":\"%s\"}", name, itype, ctype
+                  }' /tmp/nodes.txt)
+
+                  PAYLOAD="{\"label\":\"${LABEL}\",\"timestamp\":\"${TS}\",\"nodes\":[${NODES_JSON}]}"
+
+                  kubectl get configmap node-snapshots -n kube-system 2>/dev/null || \
+                    kubectl create configmap node-snapshots -n kube-system
+
+                  PAYLOAD_STR=$(printf '%s' "$PAYLOAD" | jq -Rs .)
+                  kubectl patch configmap node-snapshots -n kube-system --type=merge \
+                    -p "{\"data\":{\"${LABEL}\":${PAYLOAD_STR}}}"
+
+                  echo "Node snapshot (${LABEL} JST) saved to ConfigMap successfully"
