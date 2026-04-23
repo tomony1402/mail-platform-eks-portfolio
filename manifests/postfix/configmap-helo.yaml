@@ -7,9 +7,9 @@ data:
   helo.sh: |
     #!/bin/bash
     set -e
-    
+
     echo "helo.sh started"
-    
+
     rand_num() {
       tr -dc '0-9' </dev/urandom | head -c "$1"
     }

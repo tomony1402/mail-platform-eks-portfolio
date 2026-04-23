@@ -15,4 +15,3 @@ spec:
 
   amiSelectorTerms:
     - alias: al2023@latest
-

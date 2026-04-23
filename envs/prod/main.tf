@@ -7,8 +7,8 @@ module "network" {
   cidr = var.vpc_cidr
   azs  = var.azs
 
-  public_subnets  = var.public_subnets
-  cluster_name = var.cluster_name
+  public_subnets = var.public_subnets
+  cluster_name   = var.cluster_name
 
   tags = {
     Environment = "prod"
@@ -22,9 +22,9 @@ module "eks" {
   cluster_name    = var.cluster_name
   cluster_version = var.cluster_version
 
-  vpc_id     = module.network.vpc_id
-  subnet_ids = module.network.public_subnets
-  public_subnet_ids = module.network.public_subnets  
+  vpc_id            = module.network.vpc_id
+  subnet_ids        = module.network.public_subnets
+  public_subnet_ids = module.network.public_subnets
 
   endpoint_public_access  = var.cluster_endpoint_public_access
   endpoint_private_access = var.cluster_endpoint_private_access
@@ -107,7 +107,7 @@ module "karpenter" {
 
   oidc_provider_arn = module.eks.oidc_provider_arn
   oidc_provider_url = module.eks.oidc_provider_url
-  
-  node_role_name   = module.eks.node_group_role_name
-  aws_account_id   = data.aws_caller_identity.current.account_id
+
+  node_role_name = module.eks.node_group_role_name
+  aws_account_id = data.aws_caller_identity.current.account_id
 }

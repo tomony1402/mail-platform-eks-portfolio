@@ -11,15 +11,13 @@ import base64
 import concurrent.futures
 import json
 import os
-import secrets
-import string
+import re as _re
 import subprocess
 import sys
 import threading
 import time
-import urllib.request
 from datetime import datetime, timezone, timedelta
-from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -761,8 +759,6 @@ reloadHelo();
 
 
 # ── Sender-canonical helpers ──────────────────────────────────────────────────
-import re as _re
-
 def _parse_sc_pairs(yaml_content: str) -> list:
     """Extract [{domain_b, domain_a}] from the configmap YAML content."""
     pairs = []

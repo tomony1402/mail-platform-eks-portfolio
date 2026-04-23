@@ -6,5 +6,5 @@ resource "aws_ecr_repository" "this" {
   }
 
   image_tag_mutability = "MUTABLE"
-  force_delete = true
+  force_delete         = true
 }

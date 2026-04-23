@@ -10,7 +10,6 @@ import sys
 import json
 import os
 from datetime import datetime, timedelta
-from calendar import monthrange
 
 # ---------------------------------------------------------------------------
 # Dependency bootstrap
@@ -30,13 +29,6 @@ except ImportError:
     print("Installing boto3...")
     pip_install("boto3")
     import boto3
-
-try:
-    import jinja2  # noqa: F401
-except ImportError:
-    print("Installing jinja2...")
-    pip_install("jinja2")
-    import jinja2
 
 # ---------------------------------------------------------------------------
 # Constants
