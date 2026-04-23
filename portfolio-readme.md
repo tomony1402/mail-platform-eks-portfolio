@@ -1,4 +1,5 @@
 # mail-platform-eks
+[![CI](https://github.com/tomony1402/mail-platform-eks-portfolio/actions/workflows/ci.yml/badge.svg)](https://github.com/tomony1402/mail-platform-eks-portfolio/actions/workflows/ci.yml)
 
 オンプレミス（AWS EC2）138台のメール配信基盤を **EKS + Karpenter** に移行・刷新したプロジェクト。
 
