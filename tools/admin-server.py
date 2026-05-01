@@ -2192,7 +2192,6 @@ class AdminHandler(BaseHTTPRequestHandler):
 
     def _api_get_cronjob_status(self):
         import json as _json
-        from datetime import timezone
         try:
             r = subprocess.run(
                 ["kubectl", "get", "cronjobs", "--all-namespaces", "-o", "json"],
@@ -2212,7 +2211,6 @@ class AdminHandler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": str(exc)})
             return
 
-        now = datetime.now(timezone.utc)
         items = []
         for cj in data.get("items", []):
             meta   = cj.get("metadata", {})
