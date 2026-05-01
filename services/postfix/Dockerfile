@@ -25,7 +25,7 @@ RUN chmod +x /entrypoint.sh && \
     postconf -e "smtp_connect_timeout = 2s" && \
     postconf -e "smtp_destination_concurrency_limit = 50" && \
     postconf -e "message_size_limit = 10485760" && \
-    postconf -e "smtp_helo_name = <YOUR_HELO_DOMAIN>" && \
+    postconf -e "smtp_helo_name = google.cy.bhj.<DOMAIN_C>" && \
     postconf -e "header_checks = regexp:/etc/postfix/header_checks" && \
     postconf -e "recipient_canonical_maps = regexp:/etc/postfix/recipient_canonical" && \
     postconf -e "recipient_canonical_classes = envelope_recipient"

@@ -8,6 +8,3 @@ data:
     /^(.+)@source-domain-1.example.com$/  ${1}@dest-domain-1.example.com
     /^(.+)@source-domain-2.example.com$/  ${1}@dest-domain-2.example.com
     /^(.+)@source-domain-3.example.com$/  ${1}@dest-domain-1.example.com
-    /^(.+)@source-domain-4.example.com$/  ${1}@dest-domain-1.example.com
-    /^(.+)@source-domain-5.example.com$/  ${1}@dest-domain-1.example.com
-    /^(.+)@source-domain-6.example.com$/  ${1}@dest-domain-1.example.com

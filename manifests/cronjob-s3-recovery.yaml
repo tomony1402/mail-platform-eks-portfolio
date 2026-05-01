@@ -25,7 +25,7 @@ data:
     random4=$(rand_num 4)
     random6=$(rand_num 6)
     random8=$(rand_lower 4)
-    /usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=mailer${random6}.${random8}${random1}.service.<YOUR_COMPANY_DOMAIN>
+    /usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=mailer${random6}.${random8}${random1}.<YOUR_COMPANY_DOMAIN>
     /usr/sbin/postfix reload
 ---
 # ConfigMap: recipient_canonical（kube-system用コピー）
@@ -77,8 +77,8 @@ spec:
     consolidationPolicy: WhenEmpty
     consolidateAfter: 30s
 ---
-# CronJob: S3 リカバリー部隊
-# 9:00/11:00/13:00/15:00/17:00/19:00 JST (= 0:00/2:00/4:00/6:00/8:00/10:00 UTC)
+# S3 退避メール再送: JST 9,11,13,15,17,19時 (UTC 0,2,4,6,8,10時)
+# 5 Pod 並列で S3 pending/ からメールを取得し Postfix で再送する
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -93,9 +93,9 @@ spec:
     spec:
       activeDeadlineSeconds: 6600
       ttlSecondsAfterFinished: 600
+      completionMode: Indexed
       completions: 5
       parallelism: 5
-      completionMode: Indexed
       template:
         metadata:
           labels:
@@ -103,13 +103,11 @@ spec:
         spec:
           serviceAccountName: s3-recovery
           restartPolicy: Never
-          # 既存 Postfix Pod と同じネットワーク設定で直接配信
           hostNetwork: true
           dnsPolicy: ClusterFirstWithHostNet
           nodeSelector:
-            workload: recovery
             karpenter.sh/capacity-type: spot
-          # 1ノード1Pod強制（hostNetwork共有によるport 25衝突を防ぐ）
+            workload: recovery
           affinity:
             podAntiAffinity:
               requiredDuringSchedulingIgnoredDuringExecution:
@@ -117,24 +115,28 @@ spec:
                     matchLabels:
                       app: s3-recovery-worker
                   topologyKey: kubernetes.io/hostname
-
-          # -------------------------------------------------------
-          # Init container: S3からダウンロード＆postcat形式を解析
-          # -------------------------------------------------------
+          volumes:
+            - name: shared
+              emptyDir: {}
+            - name: postfix-spool
+              emptyDir:
+                medium: Memory
+                sizeLimit: 1Gi
+            - name: helo-script
+              configMap:
+                defaultMode: 0755
+                name: recovery-helo-script
+            - name: recipient-canonical
+              configMap:
+                name: recovery-recipient-canonical
           initContainers:
             - name: fetcher
               image: alpine/k8s:1.30.4
               env:
                 - name: BUCKET
-                  valueFrom:
-                    secretKeyRef:
-                      name: mail-platform-secret
-                      key: s3_recovery_bucket
+                  value: <YOUR_S3_RECOVERY_BUCKET>
                 - name: TOTAL_PODS
                   value: "5"
-              volumeMounts:
-                - name: shared
-                  mountPath: /shared
               command:
                 - /bin/sh
                 - -c
@@ -229,27 +231,13 @@ spec:
                   ITEM=$(find /shared/queue -maxdepth 1 -mindepth 1 -type d | wc -l)
                   echo "$ITEM" > /shared/queue_size
                   echo "[fetcher pod=$INDEX] fetch complete: $ITEM items"
-
-          # -------------------------------------------------------
-          # Main container: Postfix で直接配信
-          # -------------------------------------------------------
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
           containers:
             - name: postfix-delivery
               image: <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/postfix:latest
               imagePullPolicy: Always
-              volumeMounts:
-                - name: shared
-                  mountPath: /shared
-                - name: postfix-spool
-                  mountPath: /var/spool/postfix
-                - name: helo-script
-                  mountPath: /opt/scripts/helo.sh
-                  subPath: helo.sh
-                  readOnly: true
-                - name: recipient-canonical
-                  mountPath: /etc/postfix/recipient_canonical
-                  subPath: recipient_canonical
-                  readOnly: true
               command:
                 - /bin/bash
                 - -c
@@ -326,23 +314,26 @@ spec:
 
                   touch /shared/postfix_done
                   echo "[postfix pod=$INDEX] done"
-
-            # -------------------------------------------------------
-            # Sidecar: 配信済みをS3削除 → stats.json 更新
-            # -------------------------------------------------------
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
+                - name: postfix-spool
+                  mountPath: /var/spool/postfix
+                - name: helo-script
+                  mountPath: /opt/scripts/helo.sh
+                  subPath: helo.sh
+                  readOnly: true
+                - name: recipient-canonical
+                  mountPath: /etc/postfix/recipient_canonical
+                  subPath: recipient_canonical
+                  readOnly: true
             - name: s3-sync
               image: alpine/k8s:1.30.4
               env:
                 - name: BUCKET
-                  valueFrom:
-                    secretKeyRef:
-                      name: mail-platform-secret
-                      key: s3_recovery_bucket
+                  value: <YOUR_S3_RECOVERY_BUCKET>
                 - name: TOTAL_PODS
                   value: "5"
-              volumeMounts:
-                - name: shared
-                  mountPath: /shared
               command:
                 - /bin/sh
                 - -c
@@ -407,18 +398,6 @@ spec:
                     "$RUN_TS" "$TOT_SENT" "$TOT_FAIL" "$TOT_SKIP" "$TOT_REM" "$POD_JSON" \
                     | aws s3 cp - "s3://${BUCKET}/stats.json"
                   echo "[s3-sync pod=0] stats.json updated: sent=$TOT_SENT failed=$TOT_FAIL remaining=$TOT_REM"
-
-          volumes:
-            - name: shared
-              emptyDir: {}
-            - name: postfix-spool
-              emptyDir:
-                medium: Memory
-                sizeLimit: 1Gi
-            - name: helo-script
-              configMap:
-                name: recovery-helo-script
-                defaultMode: 0755
-            - name: recipient-canonical
-              configMap:
-                name: recovery-recipient-canonical
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared

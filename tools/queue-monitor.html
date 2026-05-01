@@ -191,10 +191,12 @@
   <h1>Mail Platform Admin</h1>
   <nav>
     <a href="/">&#128200; AWS コスト</a>
-    <a href="/helo">&#9993; HELO 名設定</a>
+    <a href="/helo">&#9993; HELO 設定</a>
     <a href="/sender-canonical">&#8644; バウンスドメイン設定</a>
-    <a href="/metrics">&#128202; 監視</a>
     <a href="/queue" class="active">&#128679; キュー監視</a>
+    <a href="/metrics">&#128202; 監視</a>
+    <a href="/cluster">&#127760; クラスタ構成</a>
+    <a href="/cronjobs">&#128337; CronJob 一覧</a>
     <a href="/node-monitor">&#128268; ノード種類</a>
   </nav>
   <span class="header-badge">mail-platform-eks</span>
@@ -240,7 +242,7 @@ function escHtml(s) {
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-function buildSummary(pods, s3pods, s3total) {
+function buildSummary(pods, s3pods, s3total, statsData) {
   const entries = Object.entries(pods || {});
   const serverCount = entries.length;
   const totalQueue  = entries.reduce((sum, [, c]) => sum + (typeof c === 'number' ? c : 0), 0);
@@ -252,6 +254,7 @@ function buildSummary(pods, s3pods, s3total) {
         <span style="font-size:0.7rem;color:var(--muted)">件</span>
       </div>`
     : '';
+  const cumBlock = '';
   return `<div style="display:flex;gap:1.25rem;flex-wrap:wrap;margin-bottom:0.6rem;padding-bottom:0.5rem;border-bottom:1px solid var(--border)">
     <div style="display:flex;align-items:baseline;gap:0.3rem">
       <span style="font-size:0.7rem;color:var(--muted)">サーバー台数</span>
@@ -263,14 +266,14 @@ function buildSummary(pods, s3pods, s3total) {
       <span class="${qCls}" style="font-size:1rem;font-weight:700">${totalQueue.toLocaleString()}</span>
       <span style="font-size:0.7rem;color:var(--muted)">件</span>
     </div>
-    ${s3Block}
+    ${s3Block}${cumBlock}
   </div>`;
 }
 
-function buildPodRows(pods, s3pods, s3total) {
+function buildPodRows(pods, s3pods, s3total, statsData) {
   const entries = Object.entries(pods || {});
   if (!entries.length) return '<div class="snap-empty">Pod なし</div>';
-  return buildSummary(pods, s3pods, s3total) + entries.map(([pod, count]) => {
+  return buildSummary(pods, s3pods, s3total, statsData) + entries.map(([pod, count]) => {
     const isNum  = typeof count === 'number';
     const isCrit = isNum && count > 1000;
     const isWarn = isNum && count > 500 && !isCrit;
@@ -320,19 +323,21 @@ function buildNodeTypeSummary(nodeSnapshots) {
 
 async function fetchSnapshots() {
   try {
-    const [queueRes, s3Res, nodeRes] = await Promise.all([
+    const [queueRes, s3Res, statsRes, nodeRes] = await Promise.all([
       fetch('/api/queue'),
       fetch('/api/s3-queue-count'),
+      fetch('/api/recovery-stats'),
       fetch('/api/node-snapshots'),
     ]);
     const data      = await queueRes.json();
     const s3Data    = await s3Res.json();
+    const statsData = await statsRes.json();
     const nodeData  = await nodeRes.json();
     if (!data.ok) throw new Error(data.error || 'unknown error');
     const snapshots     = data.snapshots || {};
     const nodeSnapshots = (nodeData.ok && nodeData.snapshots) ? nodeData.snapshots : null;
     renderSnapshots(snapshots);
-    if (snapshots.manual) renderManualCard(snapshots.manual, s3Data, nodeSnapshots);
+    if (snapshots.manual) renderManualCard(snapshots.manual, s3Data, statsData, nodeSnapshots);
   } catch (e) {
     const grid = document.getElementById('snap-grid');
     grid.innerHTML = `<div style="color:var(--red);font-size:0.8rem">${escHtml(String(e))}</div>`;
@@ -361,7 +366,7 @@ function renderSnapshots(snapshots) {
   grid.innerHTML = cards.join('');
 }
 
-function renderManualCard(snap, s3data, nodeSnapshots) {
+function renderManualCard(snap, s3data, statsData, nodeSnapshots) {
   const area    = document.getElementById('manual-area');
   const ts      = new Date(snap.timestamp).toLocaleString('ja-JP', {timeZone:'Asia/Tokyo'});
   const s3pods  = (s3data && s3data.pods)  || null;
@@ -369,7 +374,7 @@ function renderManualCard(snap, s3data, nodeSnapshots) {
   area.innerHTML = `<div class="manual-card">
     <div class="manual-card-title">&#128247; 手動取得</div>
     <div class="manual-card-ts">${ts}</div>
-    ${buildPodRows(snap.pods, s3pods, s3total)}
+    ${buildPodRows(snap.pods, s3pods, s3total, statsData)}
     ${buildNodeTypeSummary(nodeSnapshots)}
   </div>`;
 }
@@ -380,17 +385,19 @@ async function fetchManual() {
   btn.disabled = true;
   status.textContent = '取得中...';
   try {
-    const [snapRes, s3Res, nodeRes] = await Promise.all([
+    const [snapRes, s3Res, statsRes, nodeRes] = await Promise.all([
       fetch('/api/queue/snapshot', {method: 'POST'}),
       fetch('/api/s3-queue-count'),
+      fetch('/api/recovery-stats'),
       fetch('/api/node-snapshots'),
     ]);
     const snapData  = await snapRes.json();
     const s3Data    = await s3Res.json();
+    const statsData = await statsRes.json();
     const nodeData  = await nodeRes.json();
     if (!snapData.ok) throw new Error(snapData.error || 'unknown error');
     const nodeSnapshots = (nodeData.ok && nodeData.snapshots) ? nodeData.snapshots : null;
-    renderManualCard(snapData.snapshot, s3Data, nodeSnapshots);
+    renderManualCard(snapData.snapshot, s3Data, statsData, nodeSnapshots);
     status.style.color = 'var(--green)';
     status.textContent = '取得完了';
   } catch (e) {

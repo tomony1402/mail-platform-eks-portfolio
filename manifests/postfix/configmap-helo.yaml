@@ -11,15 +11,15 @@ data:
     echo "helo.sh started"
 
     rand_num() {
-      tr -dc '0-9' </dev/urandom | head -c "$1"
+      tr -dc '0-9' </dev/urandom | head -c "$1" || true
     }
 
     rand_lower() {
-      tr -dc 'a-z' </dev/urandom | head -c "$1"
+      tr -dc 'a-z' </dev/urandom | head -c "$1" || true
     }
 
     rand_upper() {
-      tr -dc 'A-Z' </dev/urandom | head -c "$1"
+      tr -dc 'A-Z' </dev/urandom | head -c "$1" || true
     }
 
     random1=$(rand_num 1)
@@ -35,8 +35,8 @@ data:
     random11=$(rand_lower 2)
     random12=$(rand_num 1)
 
-      /usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=mailer${random6}.${random8}${random1}.service.<YOUR_COMPANY_DOMAIN>
-    #/usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=bmmpl${random4}.jpx1.${random3}.<DOMAIN_B>
+     #/usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=mailer${random6}.${random8}${random1}.<YOUR_COMPANY_DOMAIN>
+    /usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=bmmpl${random4}.jpx1.${random3}.<DOMAIN_B>
     #/usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=google.${random2}.${random3}.<DOMAIN_C>
     #/usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=mta${random1}.service.${random5}.net
     #/usr/sbin/postconf -e -c /etc/postfix smtp_helo_name=o1.haishin.${random3}.<DOMAIN_D>

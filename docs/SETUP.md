@@ -26,7 +26,8 @@
 # 初回のみ
 terraform -chdir=envs/prod/ init
 
-# 適用
+# 適用（初回は EKS を先に作成してから全体 apply）
+terraform -chdir=envs/prod/ apply -target=module.eks
 terraform -chdir=envs/prod/ apply
 ```
 
@@ -108,6 +109,7 @@ kubectl apply -f manifests/karpenter/nodepool-b-od.yaml
 ```bash
 kubectl apply -f manifests/postfix/configmap-helo.yaml
 kubectl apply -f manifests/postfix/configmap-recipient-canonical.yaml
+kubectl apply -f manifests/postfix/configmap-sender-canonical.yaml
 kubectl apply -f manifests/postfix/service.yaml
 kubectl apply -f manifests/postfix/deployment-a.yaml
 
@@ -116,7 +118,7 @@ sleep 600
 kubectl apply -f manifests/postfix/deployment-b.yaml
 ```
 
-> **注意**: `service.yaml` で ClusterIP を固定指定しているため、
+> **注意**: `service.yaml` で ClusterIP `x.x.x.x` を固定指定しているため、
 > 同じ IP が既に使用中の場合はエラーになる。`kubectl get svc -A` で事前確認すること。
 
 ---
@@ -129,7 +131,15 @@ kubectl apply -f manifests/cronjob-nightmode.yaml
 
 ---
 
-### Step 9: Karpenter 死活監視設定
+### Step 9: S3 退避メール再送設定
+
+```bash
+kubectl apply -f manifests/cronjob-s3-recovery.yaml
+```
+
+---
+
+### Step 10a: Karpenter 死活監視設定
 
 ```bash
 kubectl create secret generic chatwork-secret \
@@ -142,7 +152,7 @@ kubectl apply -f manifests/cronjob-karpenter-watch.yaml
 
 ---
 
-### Step 10: metrics-server のインストール
+### Step 10b: metrics-server のインストール
 
 ```bash
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
@@ -177,10 +187,10 @@ kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=50
 
 | JST | UTC | replicas (a+b) |
 |-----|-----|----------------|
-| 08:00 | 23:00 (前日) | 30+30 = 60台 |
-| 22:00 | 13:00 | 10+10 = 20台 |
+| 08:00 | 23:00 (前日) | 35+35 = 70台 |
+| 22:00 | 13:00 | 8+8 = 16台 |
 | 02:00 | 17:00 | 4+4 = 8台 |
-| 06:00 | 21:00 | 10+10 = 20台 |
+| 06:00 | 21:00 | 8+8 = 16台 |
 
 スケジュールや台数を変更した場合は再 apply する。
 
@@ -222,7 +232,7 @@ kubectl scale deployment postfix-deployment-b --replicas=<台数>
 
 キュー件数が1000件を超えた Pod が検知されると、メールを S3 バケット
 `<YOUR_S3_RECOVERY_BUCKET>` に退避してノードを削除する。
-退避されたメールは手動で再投入する。
+退避されたメールは `cronjob-s3-recovery.yaml` により JST 9〜19時・2時間おきに自動再送される。
 
 ---
 

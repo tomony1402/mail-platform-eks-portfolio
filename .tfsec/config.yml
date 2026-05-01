@@ -1,0 +1,34 @@
+exclude:
+  # EKS public endpoint: intentional for dev (no VPN/bastion)
+  - aws-eks-no-public-cluster-access
+  - aws-eks-no-public-cluster-access-to-cidr
+
+  # EKS control plane logs: disabled to reduce CloudWatch cost
+  - aws-eks-enable-control-plane-logging
+
+  # Node SG egress: required for nodes to reach ECR/internet
+  - aws-ec2-no-public-egress-sgr
+
+  # Gateway SG ingress from 2.56.0.0/24: intentional on-prem SMTP relay CIDR
+  - aws-ec2-no-public-ingress-sgr
+
+  # VPC module default NACLs: upstream terraform-aws-modules behavior, not overridable without forking
+  - aws-ec2-no-excessive-port-access
+  - aws-ec2-no-public-ingress-acl
+
+  # Public subnets with auto-assign public IP: intentional (no NAT gateway to reduce cost)
+  - aws-ec2-no-public-ip-subnet
+
+  # VPC flow logs: disabled to reduce CloudWatch cost
+  - aws-ec2-require-vpc-flow-logs-for-all-vpcs
+
+  # S3 recovery bucket: short-lived (7-day lifecycle), CMK/logging/versioning not required
+  - aws-s3-encryption-customer-key
+  - aws-s3-enable-bucket-logging
+  - aws-s3-enable-versioning
+
+  # ECR: mutable tags intentional (same tag overwritten on each push to simplify workflow)
+  - aws-ecr-enforce-immutable-repository
+
+  # ECR: default AES256 encryption sufficient; CMK adds cost/complexity for dev
+  - aws-ecr-repository-customer-key

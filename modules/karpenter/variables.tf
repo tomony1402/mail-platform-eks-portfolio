@@ -10,7 +10,3 @@ variable "enable_karpenter" {
 variable "node_role_name" {
   type = string
 }
-
-variable "aws_account_id" {
-  type = string
-}

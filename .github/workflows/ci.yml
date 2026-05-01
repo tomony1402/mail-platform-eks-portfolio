@@ -59,3 +59,53 @@ jobs:
 
       - name: Run yamllint
         run: yamllint manifests/
+
+  tflint:
+    name: TFLint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.55.0
+
+      - name: Init TFLint
+        working-directory: envs/prod
+        run: tflint --init
+
+      - name: Run TFLint
+        working-directory: envs/prod
+        run: tflint
+
+  tfsec:
+    name: TFSec
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+
+  kubeconform:
+    name: Kubeconform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar xz -C /usr/local/bin kubeconform
+
+      - name: Run kubeconform
+        run: |
+          kubeconform \
+            -kubernetes-version 1.33.0 \
+            -ignore-missing-schemas \
+            -summary \
+            manifests/

@@ -4,7 +4,11 @@ Admin Server - Mail Platform EKS  (port 8080)
 Features:
   - AWS cost visualization  (cost-viewer.py → report.html)
   - HELO ConfigMap editor + kubectl apply / rollout restart
-  - Basic auth: admin / <random 16-char password shown at startup>
+  - Sender-canonical ConfigMap editor + kubectl apply / rollout restart
+  - Queue snapshots (scheduled at 0, 3, 6 JST) + S3 recovery stats
+  - Node snapshots (scheduled at 23, 3, 7 JST)
+  - Cluster metrics (nodes / pods / CronJob status)
+  - Basic auth: admin / <password shown at startup>
 """
 
 import base64
@@ -14,6 +18,7 @@ import os
 import re as _re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone, timedelta
@@ -31,7 +36,7 @@ RECIPIENT_CANONICAL_PATH = REPO_ROOT / "manifests" / "postfix" / "configmap-reci
 QUEUE_SNAPSHOTS_PATH    = SCRIPT_DIR / "queue-snapshots.json"
 NODE_SNAPSHOTS_PATH     = SCRIPT_DIR / "node-snapshots.json"
 RECOVERY_STATS_PATH     = SCRIPT_DIR / "recovery-stats.json"
-S3_RECOVERY_BUCKET      = os.environ.get("S3_RECOVERY_BUCKET", "")
+S3_RECOVERY_BUCKET      = "<YOUR_S3_RECOVERY_BUCKET>"
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 USERNAME = "admin"
@@ -81,17 +86,21 @@ _load_queue_snapshots()
 
 # ── Node snapshot state ────────────────────────────────────────────────────────
 _node_lock      = threading.Lock()
+# Scheduled snapshot hours in JST
+_NODE_SNAP_HOURS = (23, 3, 7)
 # { "23:00": {"timestamp": ISO, "nodes": [{"name":..,"instance_type":..,"capacity_type":..}]} }
 _node_snapshots: dict = {}
+_node_snap_last_taken: dict = {}   # {hour: date_str} so we take once per day
 
 
 def _load_node_snapshots():
     """Load persisted node snapshots from disk on startup."""
-    global _node_snapshots
+    global _node_snapshots, _node_snap_last_taken
     try:
         if NODE_SNAPSHOTS_PATH.exists():
             data = json.loads(NODE_SNAPSHOTS_PATH.read_text())
             _node_snapshots = data.get("snapshots", {})
+            _node_snap_last_taken = {int(k): v for k, v in data.get("last_taken", {}).items()}
     except Exception:
         pass
 
@@ -99,13 +108,83 @@ def _load_node_snapshots():
 def _save_node_snapshots():
     """Persist node snapshots to disk (called under _node_lock)."""
     try:
-        data = {"snapshots": _node_snapshots}
+        data = {
+            "snapshots": _node_snapshots,
+            "last_taken": _node_snap_last_taken,
+        }
         NODE_SNAPSHOTS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2))
     except Exception:
         pass
 
 
 _load_node_snapshots()
+
+
+def _collect_node_data() -> list:
+    """kubectl get nodes を実行してノードリストを返す。"""
+    r = subprocess.run(
+        ["kubectl", "get", "nodes", "-o", "json"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"kubectl error (exit {r.returncode}): {r.stderr.strip() or '(no stderr)'}")
+    nodes = []
+    for item in json.loads(r.stdout).get("items", []):
+        labels = item["metadata"].get("labels", {})
+        instance_type = labels.get("node.kubernetes.io/instance-type", "")
+        raw = (
+            labels.get("eks.amazonaws.com/capacityType") or
+            labels.get("karpenter.sh/capacity-type") or
+            labels.get("node.kubernetes.io/lifecycle") or
+            ""
+        )
+        ct = raw.upper().replace("-", "_")
+        if ct == "SPOT":
+            capacity_type = "SPOT"
+        elif ct in ("ON_DEMAND", "NORMAL"):
+            capacity_type = "ON_DEMAND"
+        else:
+            capacity_type = "UNKNOWN"
+        nodes.append({
+            "name": item["metadata"]["name"],
+            "instance_type": instance_type,
+            "capacity_type": capacity_type,
+        })
+    return nodes
+
+
+def _take_node_snapshot(hour: int):
+    """Record a node snapshot keyed by the JST hour label."""
+    global _node_snapshots, _node_snap_last_taken
+    now_jst = datetime.now(JST)
+    date_str = now_jst.strftime("%Y-%m-%d")
+    if _node_snap_last_taken.get(hour) == date_str:
+        return
+    try:
+        nodes = _collect_node_data()
+    except Exception:
+        return
+    label = f"{hour:02d}:00"
+    snapshot = {
+        "timestamp": now_jst.isoformat(),
+        "nodes": nodes,
+    }
+    with _node_lock:
+        _node_snapshots[label] = snapshot
+        _node_snap_last_taken[hour] = date_str
+        _save_node_snapshots()
+
+
+def _node_scheduler():
+    """Background thread: check every minute whether a node snapshot is due."""
+    while True:
+        time.sleep(60)
+        now_jst = datetime.now(JST)
+        if now_jst.hour in _NODE_SNAP_HOURS and now_jst.minute == 0:
+            _take_node_snapshot(now_jst.hour)
+
+
+threading.Thread(target=_node_scheduler, daemon=True).start()
 
 
 def _run_cost_viewer():
@@ -147,6 +226,21 @@ def start_cost_viewer():
 
 
 # ── Queue helpers ─────────────────────────────────────────────────────────────
+def _collect_recovery_stats() -> dict:
+    """Fetch stats/recovery-stats.json from S3 and aggregate."""
+    try:
+        r = subprocess.run(
+            ["aws", "s3", "cp",
+             f"s3://{S3_RECOVERY_BUCKET}/stats/recovery-stats.json", "-"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode != 0:
+            return {"ok": True, "total_count": 0, "executions": 0}
+        records = json.loads(r.stdout)
+        total_count = sum(rec.get("count", 0) for rec in records)
+        return {"ok": True, "total_count": total_count, "executions": len(records)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "total_count": 0, "executions": 0}
 
 
 def _collect_s3_queue_counts() -> dict:
@@ -157,7 +251,7 @@ def _collect_s3_queue_counts() -> dict:
         while True:
             cmd = [
                 "aws", "s3api", "list-objects-v2",
-                "--bucket", S3_RECOVERY_BUCKET,
+                "--bucket", "<YOUR_S3_RECOVERY_BUCKET>",
                 "--prefix", "pending/",
                 "--output", "json",
             ]
@@ -413,10 +507,12 @@ _NAV_HTML = """
   <h1>Mail Platform Admin</h1>
   <nav>
     <a href="/" class="{active_cost}">&#128200; AWS コスト</a>
-    <a href="/helo" class="{active_helo}">&#9993; HELO 名設定</a>
+    <a href="/helo" class="{active_helo}">&#9993; HELO 設定</a>
     <a href="/sender-canonical" class="{active_sc}">&#8644; バウンスドメイン設定</a>
-    <a href="/metrics" class="{active_metrics}">&#128202; 監視</a>
     <a href="/queue" class="{active_queue}">&#128679; キュー監視</a>
+    <a href="/metrics" class="{active_metrics}">&#128202; 監視</a>
+    <a href="/cluster" class="{active_cluster}">&#127760; クラスタ構成</a>
+    <a href="/cronjobs" class="{active_cron}">&#128337; CronJob 一覧</a>
     <a href="/node-monitor" class="{active_node}">&#128268; ノード種類</a>
   </nav>
   <span class="header-badge">mail-platform-eks</span>
@@ -432,6 +528,8 @@ def _nav(page: str) -> str:
         active_metrics="active" if page == "metrics" else "",
         active_queue="active" if page == "queue" else "",
         active_node="active" if page == "node" else "",
+        active_cron="active" if page == "cron" else "",
+        active_cluster="active" if page == "cluster" else "",
     )
 
 
@@ -686,7 +784,8 @@ def _helo_page() -> str:
         Apply 時に実行されるコマンド:<br>
         <code style="color:var(--sub)">kubectl apply -f manifests/postfix/configmap-helo.yaml</code><br>
         <code style="color:var(--sub)">kubectl rollout restart deployment/postfix-deployment-a</code><br>
-        <code style="color:var(--sub)">kubectl rollout restart deployment/postfix-deployment-b</code>
+        <code style="color:var(--sub)">kubectl rollout restart deployment/postfix-deployment-b</code><br>
+        <span style="color:var(--muted)">→ recovery-helo-script (kube-system) へ自動同期</span>
       </div>
     </div>
   </div>
@@ -759,6 +858,7 @@ reloadHelo();
 
 
 # ── Sender-canonical helpers ──────────────────────────────────────────────────
+
 def _parse_sc_pairs(yaml_content: str) -> list:
     """Extract [{domain_b, domain_a}] from the configmap YAML content."""
     pairs = []
@@ -915,7 +1015,8 @@ def _sc_page() -> str:
         保存時に実行されるコマンド:<br>
         <code style="color:var(--sub)">kubectl apply -f manifests/postfix/configmap-recipient-canonical.yaml</code><br>
         <code style="color:var(--sub)">kubectl rollout restart deployment/postfix-deployment-a</code><br>
-        <code style="color:var(--sub)">kubectl rollout restart deployment/postfix-deployment-b</code>
+        <code style="color:var(--sub)">kubectl rollout restart deployment/postfix-deployment-b</code><br>
+        <span style="color:var(--muted)">→ recovery-recipient-canonical (kube-system) へ自動同期</span>
       </div>
     </div>
   </div>
@@ -1035,6 +1136,396 @@ loadPairs();
 
 
 # ── Metrics page ─────────────────────────────────────────────────────────────
+def _cron_page() -> str:
+    return """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CronJob 一覧 – Mail Platform Admin</title>
+  <style>
+""" + _COMMON_CSS + """
+    .main {
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+    .section-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--sub);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.6rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    th {
+      text-align: left;
+      padding: 0.45rem 0.75rem;
+      background: var(--surface);
+      color: var(--sub);
+      font-weight: 600;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 0.55rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    .name { font-family: "SF Mono", "Fira Code", Consolas, monospace; font-size: 0.8rem; }
+    .schedule { font-family: "SF Mono", "Fira Code", Consolas, monospace; font-size: 0.78rem; color: var(--sub); }
+    .badge {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 10px;
+      font-size: 0.68rem;
+      font-weight: 600;
+    }
+    .badge-scale    { background: #1e3a5f; color: #7ec8f7; }
+    .badge-queue    { background: #2d2a1a; color: #f0c040; }
+    .badge-recovery { background: #1f2d1f; color: #7dd87d; }
+    .badge-snap     { background: #1a2f1a; color: #6fcf6f; }
+    .badge-watch    { background: #2a1a2a; color: #d09fdf; }
+    .badge-thread   { background: #2a2a2a; color: #aaaaaa; }
+    .note { font-size: 0.75rem; color: var(--muted); margin-top: 0.2rem; }
+    .st-ok        { background: #1a3a2a; color: #6fcf6f; }
+    .st-running   { background: #1e3a5f; color: #7ec8f7; }
+    .st-failed    { background: #3a1a1a; color: #f07070; }
+    .st-never     { background: #2a2a2a; color: #888888; }
+    .st-suspended { background: #2a2a2a; color: #888888; }
+    .st-loading   { background: #2a2a2a; color: #888888; }
+    .ts { font-size: 0.72rem; color: var(--muted); }
+    .refresh-note { font-size: 0.72rem; color: var(--muted); margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+""" + _nav("cron") + """
+<div class="main">
+
+  <div class="refresh-note" id="refresh-note">ステータスを取得中…</div>
+
+  <div>
+    <div class="section-title">&#9654; スケールコントロール</div>
+    <table>
+      <thead><tr><th>名前</th><th>スケジュール (JST)</th><th>内容</th><th>ステータス</th><th>最終実行</th><th>最終成功</th></tr></thead>
+      <tbody>
+        <tr data-cron="nightmode-on">
+          <td><span class="name">nightmode-on</span></td>
+          <td><span class="schedule">0 13 * * *</span><div class="note">22:00 JST</div></td>
+          <td><span class="badge badge-scale">Scale</span> deployment-a/b → 各 8 replica</td>
+          <td class="st-cell"><span class="badge st-loading">…</span></td>
+          <td class="ts-sched ts"></td><td class="ts-success ts"></td>
+        </tr>
+        <tr data-cron="deepnight-on">
+          <td><span class="name">deepnight-on</span></td>
+          <td><span class="schedule">0 17 * * *</span><div class="note">02:00 JST</div></td>
+          <td><span class="badge badge-scale">Scale</span> deployment-a/b → 各 4 replica</td>
+          <td class="st-cell"><span class="badge st-loading">…</span></td>
+          <td class="ts-sched ts"></td><td class="ts-success ts"></td>
+        </tr>
+        <tr data-cron="deepnight-off">
+          <td><span class="name">deepnight-off</span></td>
+          <td><span class="schedule">0 21 * * *</span><div class="note">06:00 JST</div></td>
+          <td><span class="badge badge-scale">Scale</span> deployment-a/b → 各 8 replica</td>
+          <td class="st-cell"><span class="badge st-loading">…</span></td>
+          <td class="ts-sched ts"></td><td class="ts-success ts"></td>
+        </tr>
+        <tr data-cron="nightmode-off">
+          <td><span class="name">nightmode-off</span></td>
+          <td><span class="schedule">0 23 * * *</span><div class="note">08:00 JST</div></td>
+          <td><span class="badge badge-scale">Scale</span> deployment-a/b → 各 35 replica</td>
+          <td class="st-cell"><span class="badge st-loading">…</span></td>
+          <td class="ts-sched ts"></td><td class="ts-success ts"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <div class="section-title">&#9654; キュー救済</div>
+    <table>
+      <thead><tr><th>名前</th><th>スケジュール (JST)</th><th>内容</th><th>ステータス</th><th>最終実行</th><th>最終成功</th></tr></thead>
+      <tbody>
+        <tr data-cron="queue-monitor">
+          <td><span class="name">queue-monitor</span></td>
+          <td><span class="schedule">*/2 * * * *</span><div class="note">2 分ごと</div></td>
+          <td><span class="badge badge-queue">Queue</span> キュー 1000通超 Pod の mail を S3 保存 → ノード削除</td>
+          <td class="st-cell"><span class="badge st-loading">…</span></td>
+          <td class="ts-sched ts"></td><td class="ts-success ts"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <div class="section-title">&#9654; S3 リカバリー</div>
+    <table>
+      <thead><tr><th>名前</th><th>スケジュール (JST)</th><th>内容</th><th>ステータス</th><th>最終実行</th><th>最終成功</th></tr></thead>
+      <tbody>
+        <tr data-cron="s3-recovery">
+          <td><span class="name">s3-recovery</span></td>
+          <td><span class="schedule">0 0,2,4,6,8,10 * * *</span><div class="note">9/11/13/15/17/19時 (2時間おき)</div></td>
+          <td><span class="badge badge-recovery">Recovery</span> S3 退避メールを 5 Pod 並列で再送 (JST 9〜19時)</td>
+          <td class="st-cell"><span class="badge st-loading">…</span></td>
+          <td class="ts-sched ts"></td><td class="ts-success ts"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <div class="section-title">&#9654; 監視・通知</div>
+    <table>
+      <thead><tr><th>名前</th><th>スケジュール (JST)</th><th>内容</th><th>ステータス</th><th>最終実行</th><th>最終成功</th></tr></thead>
+      <tbody>
+        <tr data-cron="karpenter-watch">
+          <td><span class="name">karpenter-watch</span></td>
+          <td><span class="schedule">*/5 * * * *</span><div class="note">5 分ごと</div></td>
+          <td><span class="badge badge-watch">Watch</span> Karpenter Pod 異常検知 → ChatWork 通知</td>
+          <td class="st-cell"><span class="badge st-loading">…</span></td>
+          <td class="ts-sched ts"></td><td class="ts-success ts"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <div class="section-title">&#9654; admin-server 内部スレッド（CronJob 外）</div>
+    <table>
+      <thead><tr><th>名前</th><th>スケジュール (JST)</th><th>内容</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="name">_queue_scheduler</span></td>
+          <td><span class="schedule">00:00 / 03:00 / 06:00</span></td>
+          <td><span class="badge badge-thread">Thread</span> mailq スナップショット取得（1日1回）</td>
+        </tr>
+        <tr>
+          <td><span class="name">_node_scheduler</span></td>
+          <td><span class="schedule">23:00 / 03:00 / 07:00</span></td>
+          <td><span class="badge badge-thread">Thread</span> ノードスナップショット取得</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+<script>
+  function fmtTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    const now = new Date();
+    const diffMin = Math.round((now - d) / 60000);
+    const ts = d.toLocaleString('ja-JP', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
+    const ago = diffMin < 60 ? diffMin + '分前' : Math.round(diffMin/60) + '時間前';
+    return ts + ' (' + ago + ')';
+  }
+
+  const BADGE_LABEL = { ok:'OK', running:'実行中', failed:'FAILED', never:'未実行', suspended:'SUSPENDED' };
+
+  function refresh() {
+    fetch('/api/cronjob-status')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.ok) {
+          document.getElementById('refresh-note').textContent = 'エラー: ' + data.error;
+          return;
+        }
+        const map = {};
+        data.items.forEach(item => { map[item.name] = item; });
+
+        document.querySelectorAll('tr[data-cron]').forEach(row => {
+          const name = row.dataset.cron;
+          const item = map[name];
+          if (!item) return;
+          row.querySelector('.st-cell').innerHTML =
+            '<span class="badge st-' + item.badge + '">' + (BADGE_LABEL[item.badge] || item.badge) + '</span>';
+          row.querySelector('.ts-sched').textContent   = fmtTime(item.lastScheduleTime);
+          row.querySelector('.ts-success').textContent = fmtTime(item.lastSuccessfulTime);
+        });
+
+        const now = new Date().toLocaleTimeString('ja-JP');
+        document.getElementById('refresh-note').textContent = '最終取得: ' + now + '　(30秒ごと自動更新)';
+      })
+      .catch(e => {
+        document.getElementById('refresh-note').textContent = '取得失敗: ' + e;
+      });
+  }
+
+  refresh();
+  setInterval(refresh, 30000);
+</script>
+</body>
+</html>
+"""
+
+
+def _cluster_page() -> str:
+    return """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>クラスタ構成 – Mail Platform Admin</title>
+  <style>
+""" + _COMMON_CSS + """
+    .main {
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+    .section-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--sub);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.6rem;
+    }
+    .ns-note {
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+      color: var(--muted);
+      margin-left: 0.5rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    th {
+      text-align: left;
+      padding: 0.45rem 0.75rem;
+      background: var(--surface);
+      color: var(--sub);
+      font-weight: 600;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 0.55rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    .name { font-family: "SF Mono", "Fira Code", Consolas, monospace; font-size: 0.8rem; }
+    .note { font-size: 0.75rem; color: var(--muted); margin-top: 0.2rem; }
+  </style>
+</head>
+<body>
+""" + _nav("cluster") + """
+<div class="main">
+
+  <div>
+    <div class="section-title">&#9654; default <span class="ns-note">アプリケーション本体</span></div>
+    <table>
+      <thead><tr><th>リソース</th><th>種別</th><th>備考</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="name">postfix-deployment-a</span></td>
+          <td>Deployment</td>
+          <td>配信ワーカー<div class="note">expireAfter: 40分 / nodepool-a-*</div></td>
+        </tr>
+        <tr>
+          <td><span class="name">postfix-deployment-b</span></td>
+          <td>Deployment</td>
+          <td>配信ワーカー<div class="note">expireAfter: 50分 / nodepool-b-*</div></td>
+        </tr>
+        <tr>
+          <td><span class="name">gateway</span></td>
+          <td>DaemonSet</td>
+          <td>HAProxy（オンプレ橋渡し）<div class="note">hostNetwork: true / On-Demand 固定</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <div class="section-title">&#9654; kube-system <span class="ns-note">K8s 基盤 + 運用系</span></div>
+    <table>
+      <thead><tr><th>リソース</th><th>種別</th><th>備考</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="name">nightmode-on / off</span></td>
+          <td>CronJob</td>
+          <td>夜間スケールダウン（22:00 / 08:00 JST）</td>
+        </tr>
+        <tr>
+          <td><span class="name">deepnight-on / off</span></td>
+          <td>CronJob</td>
+          <td>深夜スケールダウン（02:00 / 06:00 JST）</td>
+        </tr>
+        <tr>
+          <td><span class="name">queue-monitor</span></td>
+          <td>CronJob</td>
+          <td>キュー1000件超 → S3退避 + ノード削除（2分ごと）</td>
+        </tr>
+        <tr>
+          <td><span class="name">s3-recovery</span></td>
+          <td>CronJob</td>
+          <td>S3退避メール再送（JST 9〜19時・2時間おき）</td>
+        </tr>
+        <tr>
+          <td><span class="name">karpenter-watch</span></td>
+          <td>CronJob</td>
+          <td>Karpenter 異常検知 → ChatWork 通知（5分ごと）</td>
+        </tr>
+        <tr>
+          <td><span class="name">aws-node</span></td>
+          <td>DaemonSet</td>
+          <td>VPC CNI（各ノードに1つ）</td>
+        </tr>
+        <tr>
+          <td><span class="name">kube-proxy</span></td>
+          <td>DaemonSet</td>
+          <td>K8s 標準（各ノードに1つ）</td>
+        </tr>
+        <tr>
+          <td><span class="name">coredns</span></td>
+          <td>Deployment</td>
+          <td>DNS 解決</td>
+        </tr>
+        <tr>
+          <td><span class="name">metrics-server</span></td>
+          <td>Deployment</td>
+          <td>メトリクス収集</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <div class="section-title">&#9654; karpenter <span class="ns-note">ノード自動管理</span></div>
+    <table>
+      <thead><tr><th>リソース</th><th>種別</th><th>備考</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="name">karpenter</span></td>
+          <td>Deployment</td>
+          <td>ノードのオートスケール・置き換えを管理</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>
+"""
+
+
 def _metrics_page() -> str:
     return """<!DOCTYPE html>
 <html lang="ja">
@@ -1641,10 +2132,18 @@ class AdminHandler(BaseHTTPRequestHandler):
             self._serve_static_html("queue-monitor.html")
         elif path == "/node-monitor":
             self._serve_static_html("node-monitor.html")
+        elif path == "/cronjobs":
+            self._send(200, "text/html; charset=utf-8", _cron_page().encode("utf-8"))
+        elif path == "/api/cronjob-status":
+            self._api_get_cronjob_status()
+        elif path == "/cluster":
+            self._send(200, "text/html; charset=utf-8", _cluster_page().encode("utf-8"))
         elif path == "/api/queue":
             self._api_get_queue()
         elif path == "/api/s3-queue-count":
             self._api_get_s3_queue_count()
+        elif path == "/api/recovery-stats":
+            self._api_get_recovery_stats()
         elif path == "/api/node-snapshots":
             self._api_get_node_snapshots()
         else:
@@ -1690,6 +2189,67 @@ class AdminHandler(BaseHTTPRequestHandler):
     def _api_cost_status(self):
         with _cost_lock:
             self._json({"status": _cost_status, "log": _cost_log})
+
+    def _api_get_cronjob_status(self):
+        import json as _json
+        from datetime import timezone
+        try:
+            r = subprocess.run(
+                ["kubectl", "get", "cronjobs", "--all-namespaces", "-o", "json"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if r.returncode != 0:
+                self._json({"ok": False, "error": (r.stderr or r.stdout).strip()})
+                return
+            data = _json.loads(r.stdout)
+        except FileNotFoundError:
+            self._json({"ok": False, "error": "kubectl が見つかりません"})
+            return
+        except subprocess.TimeoutExpired:
+            self._json({"ok": False, "error": "タイムアウト (15s)"})
+            return
+        except Exception as exc:
+            self._json({"ok": False, "error": str(exc)})
+            return
+
+        now = datetime.now(timezone.utc)
+        items = []
+        for cj in data.get("items", []):
+            meta   = cj.get("metadata", {})
+            spec   = cj.get("spec", {})
+            status = cj.get("status", {})
+
+            last_sched   = status.get("lastScheduleTime")
+            last_success = status.get("lastSuccessfulTime")
+            active       = len(status.get("active") or [])
+            suspended    = spec.get("suspend", False)
+
+            # Determine status badge
+            if suspended:
+                badge = "suspended"
+            elif active > 0:
+                badge = "running"
+            elif not last_sched:
+                badge = "never"
+            elif last_success:
+                ts_sched   = datetime.fromisoformat(last_sched.replace("Z", "+00:00"))
+                ts_success = datetime.fromisoformat(last_success.replace("Z", "+00:00"))
+                badge = "ok" if ts_success >= ts_sched else "failed"
+            else:
+                badge = "failed"
+
+            items.append({
+                "name":        meta.get("name"),
+                "namespace":   meta.get("namespace"),
+                "schedule":    spec.get("schedule"),
+                "active":      active,
+                "suspended":   suspended,
+                "lastScheduleTime":  last_sched,
+                "lastSuccessfulTime": last_success,
+                "badge":       badge,
+            })
+
+        self._json({"ok": True, "items": items})
 
     def _api_get_helo(self):
         try:
@@ -1747,6 +2307,33 @@ class AdminHandler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": str(exc)})
                 return
 
+        # recovery-helo-script (kube-system) を postfix-helo-script と同期する
+        try:
+            r = subprocess.run(
+                ["kubectl", "get", "configmap", "postfix-helo-script", "-n", "default",
+                 "-o", "jsonpath={.data.helo\\.sh}"],
+                capture_output=True, text=True, timeout=30,
+            )
+            helo_sh = r.stdout
+            if helo_sh:
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                                delete=False, encoding="utf-8") as tmp:
+                    tmp.write("apiVersion: v1\nkind: ConfigMap\n"
+                              "metadata:\n  name: recovery-helo-script\n"
+                              "  namespace: kube-system\n"
+                              "data:\n  helo.sh: |\n")
+                    for line in helo_sh.splitlines():
+                        tmp.write(f"    {line}\n")
+                    tmp_path = tmp.name
+                r2 = subprocess.run(["kubectl", "apply", "-f", tmp_path],
+                                    capture_output=True, text=True, timeout=30)
+                os.unlink(tmp_path)
+                lines.append("$ kubectl apply -f <tmpfile> (recovery-helo-script -n kube-system)")
+                if r2.stdout.strip():
+                    lines.append(r2.stdout.strip())
+        except Exception:
+            pass  # 同期失敗はメインの処理に影響させない
+
         self._json({"ok": True, "output": "\n".join(lines)})
 
     def _api_get_sc(self):
@@ -1801,6 +2388,33 @@ class AdminHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)})
                 return
+
+        # recovery-recipient-canonical (kube-system) を postfix-recipient-canonical と同期する
+        try:
+            r = subprocess.run(
+                ["kubectl", "get", "configmap", "postfix-recipient-canonical", "-n", "default",
+                 "-o", "jsonpath={.data.recipient_canonical}"],
+                capture_output=True, text=True, timeout=30,
+            )
+            rc_data = r.stdout
+            if rc_data:
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                                delete=False, encoding="utf-8") as tmp:
+                    tmp.write("apiVersion: v1\nkind: ConfigMap\n"
+                              "metadata:\n  name: recovery-recipient-canonical\n"
+                              "  namespace: kube-system\n"
+                              "data:\n  recipient_canonical: |\n")
+                    for line in rc_data.splitlines():
+                        tmp.write(f"    {line}\n")
+                    tmp_path = tmp.name
+                r2 = subprocess.run(["kubectl", "apply", "-f", tmp_path],
+                                    capture_output=True, text=True, timeout=30)
+                os.unlink(tmp_path)
+                lines.append("$ kubectl apply -f <tmpfile> (recovery-recipient-canonical -n kube-system)")
+                if r2.stdout.strip():
+                    lines.append(r2.stdout.strip())
+        except Exception:
+            pass  # 同期失敗はメインの処理に影響させない
 
         self._json({"ok": True, "output": "\n".join(lines)})
 
@@ -1981,6 +2595,9 @@ class AdminHandler(BaseHTTPRequestHandler):
     def _api_get_s3_queue_count(self):
         self._json(_collect_s3_queue_counts())
 
+    def _api_get_recovery_stats(self):
+        self._json(_collect_recovery_stats())
+
     def _api_post_queue_snapshot(self):
         """手動スナップショット取得: キューを今すぐ収集して manual キーで保存する。"""
         global _queue_snapshots
@@ -2003,38 +2620,7 @@ class AdminHandler(BaseHTTPRequestHandler):
         global _node_snapshots
         try:
             now_jst = datetime.now(JST)
-            r = subprocess.run(
-                ["kubectl", "get", "nodes", "-o", "json"],
-                capture_output=True, text=True, timeout=30,
-            )
-            if r.returncode != 0:
-                self._json({"ok": False, "error": f"kubectl error (exit {r.returncode}): {r.stderr.strip() or '(no stderr)'}"})
-                return
-            nodes = []
-            for item in json.loads(r.stdout).get("items", []):
-                labels = item["metadata"].get("labels", {})
-                instance_type = labels.get("node.kubernetes.io/instance-type", "")
-                # managed node groups: eks.amazonaws.com/capacityType = SPOT / ON_DEMAND
-                # Karpenter:           karpenter.sh/capacity-type      = spot / on-demand
-                # 旧形式:              node.kubernetes.io/lifecycle     = spot / normal
-                raw = (
-                    labels.get("eks.amazonaws.com/capacityType") or
-                    labels.get("karpenter.sh/capacity-type") or
-                    labels.get("node.kubernetes.io/lifecycle") or
-                    ""
-                )
-                ct = raw.upper().replace("-", "_")
-                if ct == "SPOT":
-                    capacity_type = "SPOT"
-                elif ct in ("ON_DEMAND", "NORMAL"):
-                    capacity_type = "ON_DEMAND"
-                else:
-                    capacity_type = "UNKNOWN"
-                nodes.append({
-                    "name": item["metadata"]["name"],
-                    "instance_type": instance_type,
-                    "capacity_type": capacity_type,
-                })
+            nodes = _collect_node_data()
             snapshot = {"timestamp": now_jst.isoformat(), "nodes": nodes}
             with _node_lock:
                 _node_snapshots["manual"] = snapshot
@@ -2044,24 +2630,8 @@ class AdminHandler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": str(exc)})
 
     def _api_get_node_snapshots(self):
-        snapshots = {}
-        try:
-            r = subprocess.run(
-                ["kubectl", "get", "configmap", "node-snapshots",
-                 "-n", "kube-system", "-o", "jsonpath={.data}"],
-                capture_output=True, text=True, timeout=30,
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                for label, payload_str in json.loads(r.stdout).items():
-                    try:
-                        snapshots[label] = json.loads(payload_str)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
         with _node_lock:
-            if "manual" in _node_snapshots:
-                snapshots["manual"] = _node_snapshots["manual"]
+            snapshots = dict(_node_snapshots)
         self._json({"ok": True, "snapshots": snapshots})
 
     def _api_post_node_snapshot(self):

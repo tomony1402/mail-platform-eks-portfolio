@@ -78,7 +78,7 @@ resource "aws_iam_policy" "karpenter_controller" {
         Action = [
           "iam:PassRole"
         ]
-        Resource = "arn:aws:iam::${var.aws_account_id}:role/${var.node_role_name}"
+        Resource = "arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:role/${var.node_role_name}"
       },
       {
         Sid    = "KarpenterIAM"
@@ -100,7 +100,7 @@ resource "aws_iam_policy" "karpenter_controller" {
         Action = [
           "eks:DescribeCluster"
         ]
-        Resource = "arn:aws:eks:us-east-1:${var.aws_account_id}:cluster/${var.cluster_name}"
+        Resource = "arn:aws:eks:us-east-1:<YOUR_AWS_ACCOUNT_ID>:cluster/${var.cluster_name}"
       }
     ]
   })

@@ -1,5 +1,3 @@
-data "aws_caller_identity" "current" {}
-
 module "network" {
   source = "../../modules/network"
 
@@ -67,6 +65,16 @@ resource "aws_s3_bucket" "recovery" {
   }
 }
 
+resource "aws_s3_bucket_server_side_encryption_configuration" "recovery" {
+  bucket = aws_s3_bucket.recovery.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "recovery" {
   bucket = aws_s3_bucket.recovery.id
 
@@ -109,5 +117,4 @@ module "karpenter" {
   oidc_provider_url = module.eks.oidc_provider_url
 
   node_role_name = module.eks.node_group_role_name
-  aws_account_id = data.aws_caller_identity.current.account_id
 }

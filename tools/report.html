@@ -7,478 +7,395 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0f172a;
-      color: #e2e8f0;
-      min-height: 100vh;
-      padding: 2rem;
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 2rem; }
+    h1 { font-size: 1.8rem; font-weight: 700; color: #f8fafc; margin-bottom: 0.25rem; }
+    .subtitle { color: #94a3b8; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    /* Tabs */
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 2rem; flex-wrap: wrap; }
+    .tab {
+      padding: 0.5rem 1.25rem; border-radius: 8px; border: 1px solid #334155;
+      background: #1e293b; color: #94a3b8; font-size: 0.95rem; cursor: pointer; transition: all 0.15s;
     }
-
-    h1 {
-      font-size: 1.8rem;
-      font-weight: 700;
-      color: #f8fafc;
-      margin-bottom: 0.25rem;
-    }
-
-    .subtitle {
-      color: #94a3b8;
-      font-size: 0.9rem;
-      margin-bottom: 2rem;
-    }
-
-    /* Summary cards */
-    .cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2.5rem;
-    }
-
-    .card {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 1.25rem 1.5rem;
-    }
-
-    .card-label {
-      font-size: 0.78rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #64748b;
-      margin-bottom: 0.4rem;
-    }
-
-    .card-value {
-      font-size: 1.9rem;
-      font-weight: 700;
-      color: #38bdf8;
-    }
-
-    .card-value.jpy {
-      color: #34d399;
-    }
-
-    .card-value.services {
-      color: #a78bfa;
-    }
-
-    .card-sub {
-      font-size: 0.8rem;
-      color: #64748b;
-      margin-top: 0.25rem;
-    }
-
-    /* Chart containers */
-    .charts {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.5rem;
-      margin-bottom: 2.5rem;
-    }
-
-    @media (max-width: 900px) {
-      .charts { grid-template-columns: 1fr; }
-    }
-
-    .chart-box {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 1.5rem;
-    }
-
-    .chart-title {
-      font-size: 1rem;
-      font-weight: 600;
-      color: #cbd5e1;
-      margin-bottom: 1rem;
-    }
-
-    .chart-wrap {
-      position: relative;
-      height: 320px;
-    }
-
+    .tab:hover { background: #273549; color: #e2e8f0; }
+    .tab.active { background: #38bdf8; border-color: #38bdf8; color: #0f172a; font-weight: 600; }
+    /* Panels */
+    .panel { display: none; }
+    .panel.active { display: block; }
+    /* Cards */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2.5rem; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 1.25rem 1.5rem; }
+    .card-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 0.4rem; }
+    .card-value { font-size: 1.9rem; font-weight: 700; color: #38bdf8; }
+    .card-value.jpy { color: #34d399; }
+    .card-value.services { color: #a78bfa; }
+    .card-sub { font-size: 0.8rem; color: #64748b; margin-top: 0.25rem; }
+    /* Charts */
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2.5rem; }
+    @media (max-width: 900px) { .charts { grid-template-columns: 1fr; } }
+    .chart-box { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 1.5rem; }
+    .chart-title { font-size: 1rem; font-weight: 600; color: #cbd5e1; margin-bottom: 1rem; }
+    .chart-wrap { position: relative; height: 320px; }
     /* Table */
-    .table-box {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 1.5rem;
-      overflow-x: auto;
-    }
-
-    .table-title {
-      font-size: 1rem;
-      font-weight: 600;
-      color: #cbd5e1;
-      margin-bottom: 1rem;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.875rem;
-    }
-
-    thead th {
-      text-align: left;
-      padding: 0.6rem 1rem;
-      background: #0f172a;
-      color: #64748b;
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
+    .table-box { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 1.5rem; overflow-x: auto; }
+    .table-title { font-size: 1rem; font-weight: 600; color: #cbd5e1; margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    thead th { text-align: left; padding: 0.6rem 1rem; background: #0f172a; color: #64748b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
     tbody tr:nth-child(even) { background: #162032; }
     tbody tr:hover { background: #1e3a5f; }
-
-    tbody td {
-      padding: 0.65rem 1rem;
-      border-bottom: 1px solid #1e293b;
-      color: #e2e8f0;
-    }
-
+    tbody td { padding: 0.65rem 1rem; border-bottom: 1px solid #1e293b; color: #e2e8f0; }
     .amount-cell { text-align: right; font-variant-numeric: tabular-nums; }
     .bar-cell { min-width: 140px; }
-
-    .bar-bg {
-      background: #334155;
-      border-radius: 4px;
-      height: 8px;
-      overflow: hidden;
-    }
-
-    .bar-fill {
-      background: linear-gradient(90deg, #38bdf8, #818cf8);
-      height: 100%;
-      border-radius: 4px;
-      transition: width 0.4s;
-    }
-
-    footer {
-      margin-top: 2rem;
-      text-align: center;
-      color: #475569;
-      font-size: 0.78rem;
-    }
+    .bar-bg { background: #334155; border-radius: 4px; height: 8px; overflow: hidden; }
+    .bar-fill { background: linear-gradient(90deg, #38bdf8, #818cf8); height: 100%; border-radius: 4px; transition: width 0.4s; }
+    footer { margin-top: 2rem; text-align: center; color: #475569; font-size: 0.78rem; }
   </style>
 </head>
 <body>
 
   <h1>AWS Cost Report</h1>
-  <p class="subtitle">期間: 2026-XX-01 〜 2026-XX-20 &nbsp;|&nbsp; ※ サンプルデータ</p>
+  <p class="subtitle">生成日時: 2026-05-01 08:54:42</p>
 
-  <!-- Summary cards -->
-  <div class="cards">
-    <div class="card">
-      <div class="card-label">合計コスト (USD)</div>
-      <div class="card-value">$XXX.XX</div>
-      <div class="card-sub">今月の累計</div>
-    </div>
-    <div class="card">
-      <div class="card-label">合計コスト (円換算)</div>
-      <div class="card-value jpy">¥XX,XXX</div>
-      <div class="card-sub">1 USD = 150 円</div>
-    </div>
-    <div class="card">
-      <div class="card-label">利用サービス数</div>
-      <div class="card-value services">11</div>
-      <div class="card-sub">コスト発生サービス</div>
-    </div>
-    <div class="card">
-      <div class="card-label">最高コスト日</div>
-      <div class="card-value" style="font-size:1.4rem">2026-XX-XX</div>
-      <div class="card-sub">$XX.XX</div>
-    </div>
+  <!-- Tab buttons -->
+  <div class="tabs">
+    
+    <button class="tab active" onclick="showTab(0)">2026年3月</button>
+    
+    <button class="tab" onclick="showTab(1)">2026年4月</button>
+    
   </div>
 
-  <!-- Charts -->
-  <div class="charts">
-    <div class="chart-box">
-      <div class="chart-title">サービス別コスト (USD)</div>
-      <div class="chart-wrap">
-        <canvas id="barChart"></canvas>
+  <!-- Tab panels -->
+  
+  <div class="panel active" id="panel-0">
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">合計コスト (USD)</div>
+        <div class="card-value">$42.00</div>
+        <div class="card-sub">2026-03-01 〜 2026-04-01</div>
+      </div>
+      <div class="card">
+        <div class="card-label">合計コスト (円換算)</div>
+        <div class="card-value jpy">¥6,300</div>
+        <div class="card-sub">1 USD = 150 円</div>
+      </div>
+      <div class="card">
+        <div class="card-label">利用サービス数</div>
+        <div class="card-value services">6</div>
+        <div class="card-sub">コスト発生サービス</div>
+      </div>
+      <div class="card">
+        <div class="card-label">最高コスト日</div>
+        <div class="card-value" style="font-size:1.4rem">2026-03-01</div>
+        <div class="card-sub">$3.92</div>
       </div>
     </div>
-    <div class="chart-box">
-      <div class="chart-title">日別コスト推移 (USD)</div>
-      <div class="chart-wrap">
-        <canvas id="lineChart"></canvas>
+
+    <div class="charts">
+      <div class="chart-box">
+        <div class="chart-title">サービス別コスト (USD)</div>
+        <div class="chart-wrap"><canvas id="bar-0"></canvas></div>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">日別コスト推移 (USD)</div>
+        <div class="chart-wrap"><canvas id="line-0"></canvas></div>
       </div>
     </div>
-  </div>
 
-  <!-- Service table -->
-  <div class="table-box">
-    <div class="table-title">サービス別コスト詳細</div>
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>サービス</th>
-          <th class="amount-cell">USD</th>
-          <th class="amount-cell">円換算</th>
-          <th class="amount-cell">割合</th>
-          <th>比率</th>
-        </tr>
-      </thead>
-      <tbody>
-        
-        <tr>
-          <td>1</td>
-          <td>Amazon Elastic Compute Cloud - Compute</td>
-          <td class="amount-cell">$XX.XX</td>
-          <td class="amount-cell">¥XX,XXX</td>
-          <td class="amount-cell">45.8%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:45.8%"></div>
-            </div>
-          </td>
-        </tr>
-        
-        <tr>
-          <td>2</td>
-          <td>Amazon Virtual Private Cloud</td>
-          <td class="amount-cell">$XX.XX</td>
-          <td class="amount-cell">¥X,XXX</td>
-          <td class="amount-cell">16.4%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:16.4%"></div>
-            </div>
-          </td>
-        </tr>
-        
-        <tr>
-          <td>3</td>
-          <td>Amazon Elastic Container Service for Kubernetes</td>
-          <td class="amount-cell">$XX.XX</td>
-          <td class="amount-cell">¥X,XXX</td>
-          <td class="amount-cell">13.4%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:13.4%"></div>
-            </div>
-          </td>
-        </tr>
-        
-        <tr>
-          <td>4</td>
-          <td>Tax</td>
-          <td class="amount-cell">$XX.XX</td>
-          <td class="amount-cell">¥X,XXX</td>
-          <td class="amount-cell">9.1%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:9.1%"></div>
-            </div>
-          </td>
-        </tr>
-        
-        <tr>
-          <td>5</td>
-          <td>EC2 - Other</td>
-          <td class="amount-cell">$XX.XX</td>
-          <td class="amount-cell">¥X,XXX</td>
-          <td class="amount-cell">9.1%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:9.1%"></div>
-            </div>
-          </td>
-        </tr>
-        
-        <tr>
-          <td>6</td>
-          <td>AmazonCloudWatch</td>
-          <td class="amount-cell">$XX.XX</td>
-          <td class="amount-cell">¥X,XXX</td>
-          <td class="amount-cell">5.3%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:5.3%"></div>
-            </div>
-          </td>
-        </tr>
-        
-        <tr>
-          <td>7</td>
-          <td>AWS Cost Explorer</td>
-          <td class="amount-cell">$X.XX</td>
-          <td class="amount-cell">¥XXX</td>
-          <td class="amount-cell">0.6%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:0.6%"></div>
-            </div>
-          </td>
-        </tr>
-        
-        <tr>
-          <td>8</td>
-          <td>AWS Key Management Service</td>
-          <td class="amount-cell">$X.XX</td>
-          <td class="amount-cell">¥XX</td>
-          <td class="amount-cell">0.2%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:0.2%"></div>
-            </div>
-          </td>
-        </tr>
-        
-        <tr>
-          <td>9</td>
-          <td>Amazon Simple Storage Service</td>
-          <td class="amount-cell">$X.XX</td>
-          <td class="amount-cell">¥XX</td>
-          <td class="amount-cell">0.1%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:0.1%"></div>
-            </div>
-          </td>
-        </tr>
-        
-        <tr>
-          <td>10</td>
-          <td>Amazon EC2 Container Registry (ECR)</td>
-          <td class="amount-cell">$X.XX</td>
-          <td class="amount-cell">¥1</td>
-          <td class="amount-cell">0.0%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:0.0%"></div>
-            </div>
-          </td>
-        </tr>
-        
-        <tr>
-          <td>11</td>
-          <td>AWS CloudShell</td>
-          <td class="amount-cell">$0.0000</td>
-          <td class="amount-cell">¥0</td>
-          <td class="amount-cell">0.0%</td>
-          <td class="bar-cell">
-            <div class="bar-bg">
-              <div class="bar-fill" style="width:0.0%"></div>
-            </div>
-          </td>
-        </tr>
-        
-      </tbody>
-    </table>
+    <div class="table-box">
+      <div class="table-title">サービス別コスト詳細</div>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>サービス</th>
+            <th class="amount-cell">USD</th><th class="amount-cell">円換算</th>
+            <th class="amount-cell">割合</th><th>比率</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+          <tr>
+            <td>1</td>
+            <td>Amazon Elastic Container Service for Kubernetes</td>
+            <td class="amount-cell">$15.0526</td>
+            <td class="amount-cell">¥2,258</td>
+            <td class="amount-cell">35.8%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:35.8%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>2</td>
+            <td>Amazon Elastic Compute Cloud - Compute</td>
+            <td class="amount-cell">$14.4942</td>
+            <td class="amount-cell">¥2,174</td>
+            <td class="amount-cell">34.5%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:34.5%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>3</td>
+            <td>EC2 - Other</td>
+            <td class="amount-cell">$5.8473</td>
+            <td class="amount-cell">¥877</td>
+            <td class="amount-cell">13.9%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:13.9%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>4</td>
+            <td>Tax</td>
+            <td class="amount-cell">$3.8200</td>
+            <td class="amount-cell">¥573</td>
+            <td class="amount-cell">9.1%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:9.1%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>5</td>
+            <td>Amazon Virtual Private Cloud</td>
+            <td class="amount-cell">$2.6133</td>
+            <td class="amount-cell">¥392</td>
+            <td class="amount-cell">6.2%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:6.2%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>6</td>
+            <td>AWS Key Management Service</td>
+            <td class="amount-cell">$0.1720</td>
+            <td class="amount-cell">¥26</td>
+            <td class="amount-cell">0.4%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:0.4%"></div></div></td>
+          </tr>
+          
+        </tbody>
+      </table>
+    </div>
+
   </div>
+  
+  <div class="panel" id="panel-1">
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">合計コスト (USD)</div>
+        <div class="card-value">$717.58</div>
+        <div class="card-sub">2026-04-01 〜 2026-05-01</div>
+      </div>
+      <div class="card">
+        <div class="card-label">合計コスト (円換算)</div>
+        <div class="card-value jpy">¥107,637</div>
+        <div class="card-sub">1 USD = 150 円</div>
+      </div>
+      <div class="card">
+        <div class="card-label">利用サービス数</div>
+        <div class="card-value services">11</div>
+        <div class="card-sub">コスト発生サービス</div>
+      </div>
+      <div class="card">
+        <div class="card-label">最高コスト日</div>
+        <div class="card-value" style="font-size:1.4rem">2026-04-01</div>
+        <div class="card-sub">$71.99</div>
+      </div>
+    </div>
+
+    <div class="charts">
+      <div class="chart-box">
+        <div class="chart-title">サービス別コスト (USD)</div>
+        <div class="chart-wrap"><canvas id="bar-1"></canvas></div>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">日別コスト推移 (USD)</div>
+        <div class="chart-wrap"><canvas id="line-1"></canvas></div>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <div class="table-title">サービス別コスト詳細</div>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>サービス</th>
+            <th class="amount-cell">USD</th><th class="amount-cell">円換算</th>
+            <th class="amount-cell">割合</th><th>比率</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+          <tr>
+            <td>1</td>
+            <td>Amazon Elastic Compute Cloud - Compute</td>
+            <td class="amount-cell">$367.2306</td>
+            <td class="amount-cell">¥55,085</td>
+            <td class="amount-cell">51.2%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:51.2%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>2</td>
+            <td>Amazon Virtual Private Cloud</td>
+            <td class="amount-cell">$118.8804</td>
+            <td class="amount-cell">¥17,832</td>
+            <td class="amount-cell">16.6%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:16.6%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>3</td>
+            <td>EC2 - Other</td>
+            <td class="amount-cell">$71.9628</td>
+            <td class="amount-cell">¥10,794</td>
+            <td class="amount-cell">10.0%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:10.0%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>4</td>
+            <td>Amazon Elastic Container Service for Kubernetes</td>
+            <td class="amount-cell">$70.4663</td>
+            <td class="amount-cell">¥10,570</td>
+            <td class="amount-cell">9.8%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:9.8%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>5</td>
+            <td>Tax</td>
+            <td class="amount-cell">$65.3300</td>
+            <td class="amount-cell">¥9,800</td>
+            <td class="amount-cell">9.1%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:9.1%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>6</td>
+            <td>AmazonCloudWatch</td>
+            <td class="amount-cell">$19.1267</td>
+            <td class="amount-cell">¥2,869</td>
+            <td class="amount-cell">2.7%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:2.7%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>7</td>
+            <td>AWS Cost Explorer</td>
+            <td class="amount-cell">$3.1500</td>
+            <td class="amount-cell">¥472</td>
+            <td class="amount-cell">0.4%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:0.4%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>8</td>
+            <td>AWS Key Management Service</td>
+            <td class="amount-cell">$0.9806</td>
+            <td class="amount-cell">¥147</td>
+            <td class="amount-cell">0.1%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:0.1%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>9</td>
+            <td>Amazon Simple Storage Service</td>
+            <td class="amount-cell">$0.4482</td>
+            <td class="amount-cell">¥67</td>
+            <td class="amount-cell">0.1%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:0.1%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>10</td>
+            <td>Amazon EC2 Container Registry (ECR)</td>
+            <td class="amount-cell">$0.0071</td>
+            <td class="amount-cell">¥1</td>
+            <td class="amount-cell">0.0%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:0.0%"></div></div></td>
+          </tr>
+          
+          <tr>
+            <td>11</td>
+            <td>AWS CloudShell</td>
+            <td class="amount-cell">$0.0000</td>
+            <td class="amount-cell">¥0</td>
+            <td class="amount-cell">0.0%</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:0.0%"></div></div></td>
+          </tr>
+          
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+  
 
   <footer>Generated by cost-viewer.py &nbsp;&middot;&nbsp; AWS Cost Explorer API</footer>
 
   <script>
-    // ---------- Bar chart: service costs ----------
-    const barLabels = ["Amazon Elastic Compute Cloud - Compute", "Amazon Virtual Private Cloud", "Amazon Elastic Container Service for Kubernetes", "Tax", "EC2 - Other", "AmazonCloudWatch", "AWS Cost Explorer", "AWS Key Management Service", "Amazon Simple Storage Service", "Amazon EC2 Container Registry (ECR)", "AWS CloudShell"];
-    const barData   = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; // sample: actual values omitted
+    // All months' chart data
+    const MONTHS = [{"bar_labels": ["Amazon Elastic Container Service for Kubernetes", "Amazon Elastic Compute Cloud - Compute", "EC2 - Other", "Tax", "Amazon Virtual Private Cloud", "AWS Key Management Service"], "bar_data": [15.0526, 14.4942, 5.8473, 3.82, 2.6133, 0.172], "line_labels": ["2026-03-01", "2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06", "2026-03-07", "2026-03-08", "2026-03-09", "2026-03-10", "2026-03-11", "2026-03-12", "2026-03-13", "2026-03-14", "2026-03-15", "2026-03-16", "2026-03-17", "2026-03-18", "2026-03-19", "2026-03-20", "2026-03-21", "2026-03-22", "2026-03-23", "2026-03-24", "2026-03-25", "2026-03-26", "2026-03-27", "2026-03-28", "2026-03-29", "2026-03-30", "2026-03-31"], "line_data": [3.9208, 0.1008, 0.1008, 0.1008, 3.8555, 0.12, 0.12, 2.5575, 2.5424, 2.9999, 1.4087, 1.2943, 0.0, 0.0, 0.0, 2.0603, 2.0294, 2.3496, 2.2753, 0.0, 0.0, 1.4272, 2.7144, 0.0465, 2.8248, 2.6519, 0.0, 0.0, 1.7427, 1.2658, 1.4898]}, {"bar_labels": ["Amazon Elastic Compute Cloud - Compute", "Amazon Virtual Private Cloud", "EC2 - Other", "Amazon Elastic Container Service for Kubernetes", "Tax", "AmazonCloudWatch", "AWS Cost Explorer", "AWS Key Management Service", "Amazon Simple Storage Service", "Amazon EC2 Container Registry (ECR)", "AWS CloudShell"], "bar_data": [367.2306, 118.8804, 71.9628, 70.4663, 65.33, 19.1267, 3.15, 0.9806, 0.4482, 0.0071, 0.0], "line_labels": ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-05", "2026-04-06", "2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10", "2026-04-11", "2026-04-12", "2026-04-13", "2026-04-14", "2026-04-15", "2026-04-16", "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20", "2026-04-21", "2026-04-22", "2026-04-23", "2026-04-24", "2026-04-25", "2026-04-26", "2026-04-27", "2026-04-28", "2026-04-29", "2026-04-30"], "line_data": [71.9852, 7.0245, 7.0549, 7.6469, 7.6172, 8.9645, 10.6545, 10.8343, 12.5033, 12.4118, 13.0373, 14.8611, 23.0431, 26.8916, 26.8149, 26.6166, 26.2482, 28.1541, 31.2642, 31.6709, 31.9776, 32.298, 31.922, 32.0226, 32.5384, 33.1106, 33.1179, 33.3715, 33.1653, 18.7597]}];
 
-    new Chart(document.getElementById('barChart'), {
-      type: 'bar',
-      data: {
-        labels: barLabels,
-        datasets: [{
-          label: 'Cost (USD)',
-          data: barData,
-          backgroundColor: 'rgba(56, 189, 248, 0.75)',
-          borderColor: '#38bdf8',
-          borderWidth: 1,
-          borderRadius: 4,
-        }]
-      },
-      options: {
-        indexAxis: 'y',
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: ctx => ` $${ctx.parsed.x.toFixed(4)}`
-            }
-          }
-        },
-        scales: {
-          x: {
-            ticks: { color: '#94a3b8', callback: v => '$' + v },
-            grid: { color: '#1e293b' }
-          },
-          y: {
-            ticks: {
-              color: '#94a3b8',
-              font: { size: 11 },
-              callback: function(val) {
-                const lbl = barLabels[val];
-                return lbl && lbl.length > 28 ? lbl.substring(0, 26) + '…' : lbl;
-              }
-            },
-            grid: { color: '#334155' }
+    const charts = [];
+
+    function makeBar(idx) {
+      const bl = MONTHS[idx].bar_labels;
+      const bd = MONTHS[idx].bar_data;
+      return new Chart(document.getElementById('bar-' + idx), {
+        type: 'bar',
+        data: { labels: bl, datasets: [{ label: 'Cost (USD)', data: bd,
+          backgroundColor: 'rgba(56,189,248,0.75)', borderColor: '#38bdf8', borderWidth: 1, borderRadius: 4 }] },
+        options: {
+          indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` $${ctx.parsed.x.toFixed(4)}` } } },
+          scales: {
+            x: { ticks: { color: '#94a3b8', callback: v => '$' + v }, grid: { color: '#1e293b' } },
+            y: { ticks: { color: '#94a3b8', font: { size: 11 },
+              callback: function(val) { const l = bl[val]; return l && l.length > 28 ? l.substring(0,26)+'…' : l; }
+            }, grid: { color: '#334155' } }
           }
         }
-      }
-    });
+      });
+    }
 
-    // ---------- Line chart: daily costs ----------
-    const lineLabels = ["Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6", "Day 7", "Day 8", "Day 9", "Day 10", "Day 11", "Day 12", "Day 13", "Day 14", "Day 15", "Day 16", "Day 17", "Day 18", "Day 19"];
-    const lineData   = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; // sample: actual values omitted
-
-    new Chart(document.getElementById('lineChart'), {
-      type: 'line',
-      data: {
-        labels: lineLabels,
-        datasets: [{
-          label: 'Daily Cost (USD)',
-          data: lineData,
-          borderColor: '#818cf8',
-          backgroundColor: 'rgba(129, 140, 248, 0.15)',
-          borderWidth: 2,
-          pointBackgroundColor: '#818cf8',
-          pointRadius: 3,
-          fill: true,
-          tension: 0.3,
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: ctx => ` $${ctx.parsed.y.toFixed(4)}`
-            }
-          }
-        },
-        scales: {
-          x: {
-            ticks: {
-              color: '#94a3b8',
-              maxTicksLimit: 10,
-              callback: function(val) {
-                const lbl = lineLabels[val];
-                return lbl ? lbl.substring(5) : '';   // MM-DD
-              }
-            },
-            grid: { color: '#1e293b' }
-          },
-          y: {
-            ticks: { color: '#94a3b8', callback: v => '$' + v },
-            grid: { color: '#334155' }
+    function makeLine(idx) {
+      const ll = MONTHS[idx].line_labels;
+      const ld = MONTHS[idx].line_data;
+      return new Chart(document.getElementById('line-' + idx), {
+        type: 'line',
+        data: { labels: ll, datasets: [{ label: 'Daily Cost (USD)', data: ld,
+          borderColor: '#818cf8', backgroundColor: 'rgba(129,140,248,0.15)',
+          borderWidth: 2, pointBackgroundColor: '#818cf8', pointRadius: 3, fill: true, tension: 0.3 }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` $${ctx.parsed.y.toFixed(4)}` } } },
+          scales: {
+            x: { ticks: { color: '#94a3b8', maxTicksLimit: 10,
+              callback: function(val) { const l = ll[val]; return l ? l.substring(5) : ''; }
+            }, grid: { color: '#1e293b' } },
+            y: { ticks: { color: '#94a3b8', callback: v => '$' + v }, grid: { color: '#334155' } }
           }
         }
-      }
-    });
+      });
+    }
+
+    // Initialize charts for the first tab immediately; lazy-init others on first show
+    const initialized = new Array(MONTHS.length).fill(false);
+
+    function initTab(idx) {
+      if (initialized[idx]) return;
+      initialized[idx] = true;
+      charts[idx] = { bar: makeBar(idx), line: makeLine(idx) };
+    }
+
+    function showTab(idx) {
+      document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', i === idx));
+      document.querySelectorAll('.panel').forEach((p, i) => p.classList.toggle('active', i === idx));
+      initTab(idx);
+      charts[idx].bar.resize();
+      charts[idx].line.resize();
+    }
+
+    // Init first tab on load
+    initTab(0);
   </script>
 </body>
 </html>

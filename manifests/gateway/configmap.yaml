@@ -13,4 +13,4 @@ data:
       default_backend postfix_backend
 
     backend postfix_backend
-      server postfix1 <YOUR_POSTFIX_CLUSTERIP>:25 check
+      server postfix1 x.x.x.x:25 check

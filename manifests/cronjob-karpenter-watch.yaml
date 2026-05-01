@@ -82,16 +82,11 @@ spec:
                     secretKeyRef:
                       name: chatwork-secret
                       key: token
-                - name: CHATWORK_ROOM_ID
-                  valueFrom:
-                    secretKeyRef:
-                      name: chatwork-secret
-                      key: room_id
               command:
                 - /bin/sh
                 - -c
                 - |
-                  ROOM_ID="${CHATWORK_ROOM_ID}"
+                  ROOM_ID="YOUR_CHATWORK_ROOM_ID"
                   NAMESPACE="karpenter"
                   STATE_CM="karpenter-watch-state"
                   ANOMALY=0

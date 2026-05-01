@@ -5,11 +5,11 @@ resource "aws_security_group" "gateway_node" {
   vpc_id      = var.vpc_id
 
   ingress {
-    description = "Allow SMTP from on-prem"
+    description = "Allow SMTP from on-prem (x.x.x.x/24)"
     from_port   = 25
     to_port     = 25
     protocol    = "tcp"
-    cidr_blocks = [var.onprem_cidr]
+    cidr_blocks = ["x.x.x.x/24"]
   }
 
   tags = merge(var.tags, {

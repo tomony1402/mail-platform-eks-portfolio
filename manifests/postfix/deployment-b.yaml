@@ -52,6 +52,26 @@ spec:
               mountPath: /etc/postfix/recipient_canonical
               subPath: recipient_canonical
               readOnly: true
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    echo "[preStop] start pod=$HOSTNAME"
+                    START=$(date +%s)
+                    DEADLINE=$((START + 25))
+                    while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+                      if postqueue -p 2>/dev/null | grep -q "Mail queue is empty"; then
+                        echo "[preStop] done elapsed=$(($(date +%s) - START))s"
+                        exit 0
+                      fi
+                      echo "[preStop] waiting elapsed=$(($(date +%s) - START))s"
+                      sleep 3
+                    done
+                    echo "[preStop] timeout elapsed=25s"
+                    exit 0
       volumes:
         - name: postfix-spool
           emptyDir:

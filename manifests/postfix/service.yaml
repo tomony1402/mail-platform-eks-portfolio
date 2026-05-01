@@ -6,7 +6,7 @@ metadata:
 spec:
   type: ClusterIP
   # ★ 記念すべき「固定IP」！ 100.100 でいきましょう
-  clusterIP: <YOUR_POSTFIX_CLUSTERIP>
+  clusterIP: x.x.x.x
   selector:
     role: postfix
   ports:
