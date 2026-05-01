@@ -20,14 +20,17 @@
 
 ---
 
+> 別AWSアカウントへの展開は [NEW-ACCOUNT-SETUP.md](NEW-ACCOUNT-SETUP.md) を参照。
+
+---
+
 ### Step 1: Terraform でインフラ構築
 
 ```bash
 # 初回のみ
 terraform -chdir=envs/prod/ init
 
-# 適用（初回は EKS を先に作成してから全体 apply）
-terraform -chdir=envs/prod/ apply -target=module.eks
+# 適用
 terraform -chdir=envs/prod/ apply
 ```
 
@@ -231,7 +234,7 @@ kubectl scale deployment postfix-deployment-b --replicas=<台数>
 ### S3 メール救済システム
 
 キュー件数が1000件を超えた Pod が検知されると、メールを S3 バケット
-`<YOUR_S3_RECOVERY_BUCKET>` に退避してノードを削除する。
+`mail-platform-recovery-mail-platform-eks` に退避してノードを削除する。
 退避されたメールは `cronjob-s3-recovery.yaml` により JST 9〜19時・2時間おきに自動再送される。
 
 ---
