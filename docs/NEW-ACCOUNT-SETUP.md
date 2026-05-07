@@ -69,6 +69,7 @@ aws ec2 describe-vpcs --region ap-northeast-1 --profile aws215 \
 | S3バケット名 | グローバルで一意のため、別アカウントでも同じ名前は使えない |
 | VPC上限 | リージョンごとにデフォルト5つ。超える場合は不要なVPCを削除するか上限緩和申請 |
 | AZ | アカウントによって利用可能なものが異なるため事前確認必須 |
+| helmのprofile | デフォルトプロファイルと異なるアカウントの場合、helm providerの`args`に`--profile`の指定が必要 |
 
 ---
 

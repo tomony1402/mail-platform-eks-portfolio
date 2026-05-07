@@ -5,7 +5,8 @@ resource "aws_security_group" "gateway_node" {
   vpc_id      = var.vpc_id
 
   ingress {
-    description = "Allow SMTP from on-prem (0.0.0.0/0)"
+    # NOTE: 0.0.0.0/0 はポートフォリオ公開用のマスク値。実際はオンプレミス送信元の特定 /24 サブネット。
+    description = "Allow SMTP from on-prem (masked: actual is a specific /24 subnet)"
     from_port   = 25
     to_port     = 25
     protocol    = "tcp"

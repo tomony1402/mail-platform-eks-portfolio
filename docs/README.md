@@ -55,7 +55,7 @@
 
 ```
 ┌──────────────────────────────┐
-│  オンプレミス  0.0.0.0/0    │
+│  オンプレミス  0.0.0.0/0    │  ※公開用マスク値（実際は特定の /24 サブネット）
 └──────────────┬───────────────┘
                │ SMTP :25
                ▼
@@ -116,7 +116,7 @@ modules/
 │   ├── outputs.tf       # vpc_id / public_subnets / route_table_ids を出力
 │   └── variables.tf
 ├── eks/                 # EKS クラスター・Gateway ノードグループ作成
-│   ├── main.tf          # クラスター、Gateway 用 SG（25/tcp from 0.0.0.0/0）
+│   ├── main.tf          # クラスター、Gateway 用 SG（25/tcp from 特定/24 ※公開用マスク: 0.0.0.0/0）
 │   │                    # ノードグループ（t3.medium、Taint: role=gateway:NoSchedule）
 │   ├── outputs.tf       # cluster_name / oidc_provider_arn / node_security_group_id など
 │   └── variables.tf
