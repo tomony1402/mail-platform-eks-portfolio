@@ -13,7 +13,7 @@ spec:
         group: karpenter.k8s.aws
         kind: EC2NodeClass
         name: mail-nodes
-      expireAfter: 50m
+      expireAfter: 45m
       requirements:
         - key: kubernetes.io/arch
           operator: In

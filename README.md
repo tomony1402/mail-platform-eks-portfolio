@@ -26,7 +26,7 @@ Gateway Node Group (t3.medium × 2, On-Demand)
        ▼
   Postfix Service
   ├─ deployment-a (35 pods, expire 40m, small/med Spot)
-  └─ deployment-b (35 pods, expire 50m, small/med Spot)
+  └─ deployment-b (35 pods, expire 45m, small/med Spot)
 ```
 
 ## 主な技術

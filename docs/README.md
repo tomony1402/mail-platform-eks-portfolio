@@ -78,7 +78,7 @@
   ┌─────────────┐ ┌─────────────┐
   │  deploy-a   │ │  deploy-b   │
   │  35 pods    │ │  35 pods    │
-  │  expire 40m │ │  expire 50m │
+  │  expire 40m │ │  expire 45m │
   └─────────────┘ └─────────────┘
    small/med-spot   small/med-spot
    On-Demand        On-Demand
