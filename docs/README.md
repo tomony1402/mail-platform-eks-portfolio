@@ -130,7 +130,7 @@ modules/
 │   ├── outputs.tf
 │   └── variables.tf
 ├── karpenter/           # Karpenter インストール（IAM + Helm + SQS interruption queue）
-│   ├── main.tf          # コントローラー IAM ロール・ポリシー、Helm リリース
+│   ├── main.tf          # コントローラー IAM ロール・ポリシー、SQS キュー、EventBridge ルール、Helm リリース
 │   └── variables.tf
 └── vpc-endpoints/       # S3 用 VPC エンドポイント（プライベート通信）
     ├── main.tf          # S3 (Gateway)
