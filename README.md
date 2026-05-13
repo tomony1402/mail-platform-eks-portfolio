@@ -37,6 +37,7 @@ Gateway Node Group (t3.medium × 2, On-Demand)
 - 夜間スケールダウン（70台 → 16台 or 8台）
 - S3 キュー救済システム（キュー1000件超でS3退避 → 2時間おきに再送）
 - preStop フックによる Pod 終了時キュー退避
+- Karpenter SQS interruption queue によるSpot中断の事前検知・graceful drain
 - **GitHub Actions CI**（ruff / terraform-lint / yamllint / tflint / tfsec / kubeconform）
 
 ## ドキュメント

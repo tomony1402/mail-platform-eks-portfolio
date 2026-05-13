@@ -94,6 +94,7 @@
 - キュー保持時間: 最大6時間 / 接続タイムアウト: 2秒 / 最大同時接続: 50
 - S3メール救済システム: キュー1000件超でS3退避 → ノード削除
 - preStop フック: Pod終了時にキューをS3に退避
+- SQS interruption queue: Spot中断の2分前通知をKarpenterが受信し graceful drain を実行
 
 ---
 
@@ -128,7 +129,7 @@ modules/
 │   ├── main.tf          # nightmode-controller / Postfix Pod 用ロール（S3アクセス）
 │   ├── outputs.tf
 │   └── variables.tf
-├── karpenter/           # Karpenter インストール（IAM + Helm）
+├── karpenter/           # Karpenter インストール（IAM + Helm + SQS interruption queue）
 │   ├── main.tf          # コントローラー IAM ロール・ポリシー、Helm リリース
 │   └── variables.tf
 └── vpc-endpoints/       # S3 用 VPC エンドポイント（プライベート通信）

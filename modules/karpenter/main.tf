@@ -101,6 +101,17 @@ resource "aws_iam_policy" "karpenter_controller" {
           "eks:DescribeCluster"
         ]
         Resource = "arn:aws:eks:us-east-1:<YOUR_AWS_ACCOUNT_ID>:cluster/${var.cluster_name}"
+      },
+      {
+        Sid    = "KarpenterSQS"
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueUrl",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = aws_sqs_queue.karpenter_interruption.arn
       }
     ]
   })
@@ -109,6 +120,69 @@ resource "aws_iam_policy" "karpenter_controller" {
 resource "aws_iam_role_policy_attachment" "karpenter_controller" {
   role       = aws_iam_role.karpenter_controller.name
   policy_arn = aws_iam_policy.karpenter_controller.arn
+}
+
+resource "aws_sqs_queue" "karpenter_interruption" {
+  name                      = "karpenter-interruption"
+  message_retention_seconds = 300
+  sqs_managed_sse_enabled   = true
+}
+
+resource "aws_sqs_queue_policy" "karpenter_interruption" {
+  queue_url = aws_sqs_queue.karpenter_interruption.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Service = "events.amazonaws.com" }
+        Action    = "sqs:SendMessage"
+        Resource  = aws_sqs_queue.karpenter_interruption.arn
+      }
+    ]
+  })
+}
+
+resource "aws_cloudwatch_event_rule" "karpenter_spot_interruption" {
+  name        = "karpenter-spot-interruption"
+  description = "Spot中断通知をKarpenterに転送"
+  event_pattern = jsonencode({
+    source      = ["aws.ec2"]
+    detail-type = ["EC2 Spot Instance Interruption Warning"]
+  })
+}
+
+resource "aws_cloudwatch_event_rule" "karpenter_rebalance" {
+  name        = "karpenter-rebalance"
+  description = "Rebalance推奨通知をKarpenterに転送"
+  event_pattern = jsonencode({
+    source      = ["aws.ec2"]
+    detail-type = ["EC2 Instance Rebalance Recommendation"]
+  })
+}
+
+resource "aws_cloudwatch_event_rule" "karpenter_instance_state" {
+  name        = "karpenter-instance-state"
+  description = "インスタンス状態変化をKarpenterに転送"
+  event_pattern = jsonencode({
+    source      = ["aws.ec2"]
+    detail-type = ["EC2 Instance State-change Notification"]
+  })
+}
+
+resource "aws_cloudwatch_event_target" "karpenter_spot_interruption" {
+  rule = aws_cloudwatch_event_rule.karpenter_spot_interruption.name
+  arn  = aws_sqs_queue.karpenter_interruption.arn
+}
+
+resource "aws_cloudwatch_event_target" "karpenter_rebalance" {
+  rule = aws_cloudwatch_event_rule.karpenter_rebalance.name
+  arn  = aws_sqs_queue.karpenter_interruption.arn
+}
+
+resource "aws_cloudwatch_event_target" "karpenter_instance_state" {
+  rule = aws_cloudwatch_event_rule.karpenter_instance_state.name
+  arn  = aws_sqs_queue.karpenter_interruption.arn
 }
 
 
@@ -145,6 +219,11 @@ resource "helm_release" "karpenter" {
   set {
     name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
     value = aws_iam_role.karpenter_controller.arn
+  }
+
+  set {
+    name  = "settings.interruptionQueue"
+    value = aws_sqs_queue.karpenter_interruption.name
   }
 
 }

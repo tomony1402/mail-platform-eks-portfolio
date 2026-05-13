@@ -170,14 +170,14 @@ Pod 終了時にキューが数百件ある場合：
 | 条件 | 対応 |
 |:---|:---|
 | 終了時キューが50件超えを常態化 | `terminationGracePeriodSeconds` を90秒に延長 |
-| Spot 中断が月10回超え | Karpenter SQS interruption queue を導入 |
+| Spot 中断が月10回超え | Karpenter SQS interruption queue を導入 → **2026-05-13 導入済み** |
 | s3-recovery の遅延が問題化 | SQS + dead-letter queue に移行 |
 
 ## 運用課題（検討過程で発見）
 
-### Karpenter SQS interruption queue 未設定
-Spot 中断が過去5日で0回のため現時点では優先度は低い。
-月10回を超えた時点で導入を検討する。月額コスト：約 ¥100。
+### Karpenter SQS interruption queue
+2026-05-13 導入済み。Spot中断0回の段階で予防的に設定。月額コスト：約 ¥100。
+導入の詳細・構成・理由は [ADR 0006](./0006-karpenter-sqs-interruption-queue.md) 参照。
 
 ### HELO ConfigMap 二重管理
 `postfix-helo-script`（default namespace）と `recovery-helo-script`（kube-system namespace）が別管理されており、
