@@ -80,3 +80,5 @@
   - [ADR 0002](./0002-why-spot-100-percent.md): なぜ Spot率100%にしたか
   - [ADR 0003](./0003-why-irsa-not-node-iam.md): なぜ Node IAM ではなく IRSA を選んだか
   - [ADR 0004](./0004-nodepool-weight-design.md): NodePool の優先度設計（weight による Spot フォールバック）
+  - [ADR 0005](./0005-pod-termination-queue-rescue.md): Pod 終了時のキュー消失を3層防御で処理する
+  - [ADR 0006](./0006-karpenter-sqs-interruption-queue.md): Karpenter SQS interruption queue の導入

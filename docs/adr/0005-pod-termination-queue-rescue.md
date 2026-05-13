@@ -192,6 +192,9 @@ Pod 終了時にキューが数百件ある場合：
 
 - [ADR 0001](./0001-why-karpenter.md): なぜ Karpenter を選んだか
 - [ADR 0002](./0002-why-spot-100-percent.md): なぜ Spot 率100% にしたか
+- [ADR 0003](./0003-why-irsa-not-node-iam.md): なぜ Node IAM ではなく IRSA を選んだか
+- [ADR 0004](./0004-nodepool-weight-design.md): NodePool の優先度設計
+- [ADR 0006](./0006-karpenter-sqs-interruption-queue.md): Karpenter SQS interruption queue の導入
 
 ---
 

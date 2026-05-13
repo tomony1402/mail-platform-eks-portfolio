@@ -62,5 +62,8 @@ Node drain → preStop hook 実行 → キュー流し切り → Pod終了
 
 ## 関連 ADR
 
+- [ADR 0001](./0001-why-karpenter.md): なぜ Karpenter を選んだか
 - [ADR 0002](./0002-why-spot-100-percent.md): なぜ Spot 100% を選んだか
+- [ADR 0003](./0003-why-irsa-not-node-iam.md): なぜ Node IAM ではなく IRSA を選んだか
+- [ADR 0004](./0004-nodepool-weight-design.md): NodePool の優先度設計
 - [ADR 0005](./0005-pod-termination-queue-rescue.md): Pod 終了時のキュー消失を3層防御で処理する
