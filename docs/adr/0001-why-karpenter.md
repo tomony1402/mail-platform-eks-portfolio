@@ -79,4 +79,4 @@
 - 関連 ADR:
   - [ADR 0002](./0002-why-spot-100-percent.md): なぜ Spot率100%にしたか
   - [ADR 0003](./0003-why-irsa-not-node-iam.md): なぜ Node IAM ではなく IRSA を選んだか
-  - ADR 0004: NodePool の優先度設計（weight による Spot 優先）（予定）
+  - [ADR 0004](./0004-nodepool-weight-design.md): NodePool の優先度設計（weight による Spot フォールバック）
