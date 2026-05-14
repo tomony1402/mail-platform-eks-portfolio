@@ -12,7 +12,10 @@ resource "aws_iam_role" "nightmode_controller" {
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
           StringEquals = {
-            "${var.oidc_provider_url}:sub" = "system:serviceaccount:kube-system:nightmode-controller"
+            "${var.oidc_provider_url}:sub" = [
+              "system:serviceaccount:kube-system:nightmode-controller",
+              "system:serviceaccount:kube-system:s3-recovery"
+            ]
           }
         }
       }
