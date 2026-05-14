@@ -294,7 +294,7 @@ spec:
                   TIMEOUT=900
                   ELAPSED=0
                   while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
-                    COUNT=$(postqueue -p 2>/dev/null | grep -c '^[A-F0-9]' || echo 0)
+                    COUNT=$(postqueue -p 2>/dev/null | grep -c '^[A-F0-9]' || true)
                     echo "[postfix pod=$INDEX] queue remaining: $COUNT"
                     [ "$COUNT" -eq 0 ] && break
                     sleep 15
@@ -302,7 +302,7 @@ spec:
                   done
 
                   # タイムアウト後も残っているメールは到達不能として強制削除
-                  REMAINING=$(postqueue -p 2>/dev/null | grep -c '^[A-F0-9]' || echo 0)
+                  REMAINING=$(postqueue -p 2>/dev/null | grep -c '^[A-F0-9]' || true)
                   if [ "$REMAINING" -gt 0 ]; then
                     echo "[postfix pod=$INDEX] timeout: deleting $REMAINING stuck mails"
                     postsuper -d ALL 2>/dev/null || true
